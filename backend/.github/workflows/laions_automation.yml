@@ -1,0 +1,59 @@
+name: ⚾ Laions KBO Auto Pipeline
+
+on:
+  schedule:
+    # 매일 한국시간 오전 6시(= UTC 21시)에 실행
+    - cron: "0 21 * * *"
+  workflow_dispatch:   # 수동 실행 버튼
+  push:
+    branches:
+      - main
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ 저장소 체크아웃
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v4
+
+      # 2️⃣ Python 설정
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # 3️⃣ 의존성 설치
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 4️⃣ 환경 변수 설정 (Secrets 사용)
+      - name: 🔐 Set environment variables
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "DATABASE_URL=${DATABASE_URL}" >> $GITHUB_ENV
+
+      # 5️⃣ 전날 경기 기반 피처 업데이트
+      - name: ⚙️ Update Match Features
+        run: python backend/crawler_kbo_feature.py
+
+      # 6️⃣ 오늘 경기 예측
+      - name: 🔮 Run Model Prediction
+        run: python backend/model_predict.py
+
+      # 7️⃣ 실제 경기 비교 + 팀 순위 수집
+      - name: 📊 Compare Results & Fetch Team Rank
+        run: python backend/crawler_kbo_service.py
+
+      # 8️⃣ 로그 / 결과 CSV를 artifacts로 저장
+      - name: 💾 Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: laions_outputs
+          path: |
+            backend/ai_predictions.csv
+            backend/*.log
