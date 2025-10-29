@@ -1,28 +1,28 @@
 // src/components/AiPerformanceCard.js
 
 import React, { useEffect, useState } from "react";
-import { Card, CardContent, Typography, Box, CircularProgress, Alert } from "@mui/material";
-import { getAiPerformance } from "../api/apiClient"; // 👈 apiClient에서 함수 가져오기
+import { Card, CardContent, Typography, Box, CircularProgress, Alert, Divider } from "@mui/material";
+import { getAiPerformance } from "../api/apiClient";
 
 const AiPerformanceCard = () => {
-  const [performance, setPerformance] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+    const [performance, setPerformance] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const fetchPerformance = async () => {
-      try {
-        const res = await getAiPerformance(); // 👈 apiClient 함수 사용
-        setPerformance(res.data);
-      } catch (err) {
-        console.error("AI Performance fetch error:", err);
-        setError(err.response?.data?.detail || "서버 응답 오류");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchPerformance();
-  }, []);
+    useEffect(() => {
+        const fetchPerformance = async () => {
+            try {
+                const res = await getAiPerformance();
+                setPerformance(res.data);
+            } catch (err) {
+                console.error("AI Performance fetch error:", err);
+                setError(err.response?.data?.detail || "서버 응답 오류");
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchPerformance();
+    }, []);
 
   if (loading) {
     return (
@@ -68,17 +68,6 @@ const AiPerformanceCard = () => {
           🤖 AI 예측 정확도
         </Typography>
 
-        {/* 시즌 상태별 부제 */}
-        <Typography
-          variant="subtitle2"
-          color="text.secondary"
-          gutterBottom
-          align="center"
-        >
-          {performance.mode === "season" && "⚾ 정규시즌 예측"}
-          {performance.mode === "postseason" && "🏆 포스트시즌 예측"}
-          {performance.mode === "offseason" && "📈 내년 순위 예측"}
-        </Typography>
 
         {/* 비시즌: 모델 학습 정확도 표시 */}
         {performance.mode === "offseason" ? (

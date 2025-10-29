@@ -8,7 +8,7 @@ export default function Navbar({ user }) {
     <AppBar position="static">
       <Toolbar>
         <Typography variant="h6" sx={{ flexGrow: 1 }}>
-          Laions Fan App
+          Laions
         </Typography>
         {user && (
           <Box sx={{ display: 'flex', alignItems: 'center' }}>

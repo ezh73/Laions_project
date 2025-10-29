@@ -2,7 +2,6 @@
 import React from 'react';
 import { Card, CardContent, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography, Alert } from '@mui/material';
 
-// 👈 projection 데이터를 props로 받습니다.
 export default function SeasonProjectionCard({ projection }) {
     if (!projection || !projection.ranking_projection) {
         return <Alert severity="warning">시즌 예측 데이터를 불러올 수 없습니다.</Alert>;
@@ -18,18 +17,20 @@ export default function SeasonProjectionCard({ projection }) {
                     <Table size="small">
                         <TableHead>
                             <TableRow>
-                                <TableCell>예상 순위</TableCell>
-                                <TableCell>팀 이름</TableCell>
-                                <TableCell>5강 진출 확률</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold' }}>예상 순위</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold' }}>팀 이름</TableCell>
+                                {/* ✨ [수정] 헤더를 '예상 성적'으로 변경 */}
+                                <TableCell sx={{ fontWeight: 'bold' }}>예상 성적</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {/* 👈 백엔드 데이터 키에 맞게 수정 */}
                             {projection.ranking_projection.map((team, index) => (
                                 <TableRow key={team.team}>
-                                    <TableCell>{index + 1} (평균 {team.avg_rank.toFixed(1)}위)</TableCell>
+                                    {/* ✨ [수정] 불필요한 평균 순위 텍스트 제거 */}
+                                    <TableCell>{index + 1}</TableCell>
                                     <TableCell>{team.team}</TableCell>
-                                    <TableCell>{team.playoff_probability}%</TableCell>
+                                    {/* ✨ [수정] '예상 승수'와 '예상 패수'를 함께 표시 */}
+                                    <TableCell>{Math.round(team.avg_wins)}승 {Math.round(team.avg_losses)}패</TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>

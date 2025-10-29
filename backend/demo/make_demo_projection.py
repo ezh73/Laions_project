@@ -79,6 +79,6 @@ summary["AvgRank"] = summary["predicted_win"].rank(ascending=False)
 summary["PlayoffProb"] = (1 - (summary["AvgRank"] - 1) / len(summary))
 summary["playoff_probability"] = summary["PlayoffProb"]
 
-os.makedirs("data/demo", exist_ok=True)
-summary.to_csv("data/demo/season_projection_demo.csv", index=False)
+os.makedirs(".", exist_ok=True)
+summary.to_csv("season_projection_demo.csv", index=False)
 print("✅ 모델 기반 season_projection_demo.csv 생성 완료 (25시즌 → 26시즌 예측)")

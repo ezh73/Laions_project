@@ -38,7 +38,7 @@ const SimulationResultCard = () => {
     <Card sx={{ height: "100%" }}>
       <CardContent>
         <Typography variant="h6" gutterBottom>
-          📊 AI 예측 시뮬레이션 리포트
+          AI 예측 시뮬레이션 리포트
         </Typography>
         <Typography variant="subtitle2" color="text.secondary" gutterBottom>
           분석 기준일: {report.report_date}

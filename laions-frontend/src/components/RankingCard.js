@@ -26,7 +26,7 @@ export default function RankingCard() {
     <Card sx={{ height: '100%' }}>
       <CardContent>
         <Typography variant="h6" sx={{ mb: 2 }}>
-          🏆 주간 팬 랭킹 Top 5
+          주간 팬 랭킹 Top 5
         </Typography>
         {loading ? <CircularProgress sx={{ mt: 2 }} /> : (
           <TableContainer>

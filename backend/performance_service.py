@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, text
 import pandas as pd
 import os
 from dotenv import load_dotenv
-from config import ADMIN_MODE, CURRENT_DATE
+from config import ADMIN_MODE, CURRENT_DATE, CURRENT_YEAR
 
 router = APIRouter()
 

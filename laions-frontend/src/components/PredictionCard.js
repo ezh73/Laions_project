@@ -38,7 +38,7 @@ export default function PredictionCard({ user, prediction }) {
     <Card sx={{ display: 'flex', flexDirection: 'column' }}>
       <CardContent sx={{ flexGrow: 1 }}>
         <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-          🤖 AI 예측 결과
+          AI 예측 결과
         </Typography>
 
         {/* 경기 날짜와 대진을 표시하는 부분 */}
