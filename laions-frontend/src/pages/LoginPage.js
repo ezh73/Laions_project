@@ -3,6 +3,7 @@ import React from 'react';
 import { Button, Typography, Paper } from '@mui/material';
 import GoogleIcon from '@mui/icons-material/Google';
 import { loginWithGoogle } from '../firebase';
+import '../App.css';
 
 function LoginPage() {
   const handleLogin = async () => {

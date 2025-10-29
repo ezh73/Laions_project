@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, CircularProgress, Alert } from '@mui/material';
 import { getPrediction, getSeasonProjection, getHealth } from '../api/apiClient';
+import '../App.css';
 
 import PredictionCard from '../components/PredictionCard';
 import RankingCard from '../components/RankingCard';
