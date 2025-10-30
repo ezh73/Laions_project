@@ -206,7 +206,7 @@ def api_get_season_projection():
 
             df = pd.read_csv(demo_path)
             
-            result_df = df.rename(columns={ "Team": "team", "AvgRank": "avg_rank", "PredictedWin": "avg_wins", "PredictedLoss": "avg_losses" })
+            result_df = df.rename(columns={ "Team": "team", "AvgRank": "avg_rank", "predicted_wins": "avg_wins", "predicted_losses": "avg_losses" })
             result_df = result_df[["team", "avg_rank", "avg_wins", "avg_losses"]].copy()
             result_df = result_df.sort_values(by="avg_rank", ascending=True).reset_index(drop=True)
 

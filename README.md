@@ -124,7 +124,7 @@ Laions는 이러한 문제를 해결하기 위해, AI를 단순한 예측 도구
 
 1.  **프론트엔드 폴더로 이동 및 의존성 설치**
     ```bash
-    cd ../laions-frontend  
+    cd ../frontend  
     npm install
     ```
 
