@@ -1,3 +1,4 @@
+print("Script started")
 import os
 import json
 import random
@@ -9,8 +10,11 @@ import google.generativeai as genai
 
 # --- 1. 환경 설정 ---
 load_dotenv(dotenv_path=".env")
+print("Load dotenv done")
 DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+print(f"DATABASE_URL exists: {bool(DATABASE_URL)}")
+print(f"GEMINI_API_KEY exists: {bool(GEMINI_API_KEY)}")
 
 if not DATABASE_URL or not GEMINI_API_KEY:
     raise RuntimeError("DATABASE_URL 또는 GEMINI_API_KEY가 .env에 설정되어 있지 않습니다.")
@@ -41,7 +45,7 @@ def analyze_difficulty(question: str) -> str:
 
 # --- 4. 퀴즈 생성 ---
 def create_quizzes_from_ai(topic: str, count: int) -> list[dict] | None:
-    print(f"🧠 '{topic}' 주제로 퀴즈 {count}개 생성 중...")
+    print(f"🧠 '{topic}' 주제로 퀴즈 {count}개 생성 중...", flush=True)
     prompt = f"""
 너는 KBO 기록 전문가야.
 "삼성 라이온즈"의 "{topic}"과 관련된 퀴즈를 {count}개 만들어줘.
@@ -63,7 +67,9 @@ def create_quizzes_from_ai(topic: str, count: int) -> list[dict] | None:
 ]
 """
     try:
+        print("API 호출을 시도합니다...")
         response = model.generate_content(prompt)
+        print("API 호출 성공!")
         text = response.candidates[0].content.parts[0].text
         quizzes = safe_parse_json(text)
         if quizzes and isinstance(quizzes, list):
@@ -130,13 +136,14 @@ def main():
             if not distractors:
                 continue
 
-            options = distractors + [answer]
+            # ✅ [핵심 수정] 모든 옵션을 문자열로 강제 변환하여 DB 저장 에러 방지
+            options = [str(d) for d in (distractors + [answer])]
             random.shuffle(options)
 
             quiz_data = {
                 "question": question,
                 "options": options,
-                "correct_answer": answer,
+                "correct_answer": str(answer),
                 "difficulty": difficulty,
                 "source_hint": topic
             }

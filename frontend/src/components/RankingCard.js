@@ -12,7 +12,7 @@ export default function RankingCard() {
       setLoading(true);
       try {
         const response = await getWeeklyRanking(5); // Top 5
-        setRanking(response.data.ranking);
+        setRanking(response.data); // 👈 수정: response.data.ranking에서 response.data로 변경
       } catch (err) {
         console.error(err);
       } finally {
@@ -40,9 +40,9 @@ export default function RankingCard() {
               </TableHead>
               <TableBody>
                 {ranking.map((user, index) => (
-                  <TableRow key={user.user_id}>
+                  <TableRow key={index}>
                     <TableCell>{index + 1}</TableCell>
-                    <TableCell>{user.displayName || user.user_id.substring(0, 8)}</TableCell>
+                    <TableCell>{user.display_name}</TableCell>
                     <TableCell>{user.weekly_score}</TableCell>
                   </TableRow>
                 ))}

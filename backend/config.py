@@ -4,92 +4,104 @@ from datetime import datetime, date
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-# --- 1. 환경 변수 로드 및 기본 설정 ---
+# 1. 환경 변수 로드
 load_dotenv()
 
-DATA_SOURCE = os.getenv("DATA_SOURCE", "db")
+# 2. 관리자 및 테스트 설정
+ADMIN_MODE = os.getenv("ADMIN_MODE", "false").lower() in ["true", "1", "yes"]
+ADMIN_DATE_STR = os.getenv("ADMIN_DATE") # 시연용 특정 날짜 (YYYY-MM-DD)
 
-# DB 연결 설정 (시즌 모드 자동 판별에 필요)
-DATABASE_URL = os.getenv("DATABASE_URL")
+# 3. DB 연결 설정 (관리자 모드에 따른 분기)
+if ADMIN_MODE:
+    DATABASE_URL = os.getenv("ADMIN_DATABASE_URL")
+    print("🧪 [Config] 관리자 모드: ADMIN_DATABASE_URL 연결")
+else:
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    print("🚀 [Config] 실서비스 모드: DATABASE_URL 연결")
+
+# 🚀 [추가] 모드별 동적 테이블명 설정
+TABLE_KBO_GAMES = "kbo_games_admin" if ADMIN_MODE else "kbo_games"
+TABLE_MATCH_FEATURES = "match_features_admin" if ADMIN_MODE else "match_features"
+TABLE_AI_PREDICTIONS = "ai_predictions_admin" if ADMIN_MODE else "ai_predictions"
+TABLE_KBO_SCHEDULE = "kbo_schedule_admin" if ADMIN_MODE else "kbo_schedule"
+
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL이 .env에 설정되어 있지 않습니다.")
+    raise RuntimeError("DATABASE_URL이 설정되어 있지 않습니다. .env 파일을 확인하세요.")
 
-try:
-    engine = create_engine(DATABASE_URL)
-except Exception as e:
-    print(f"🚨 DB 연결 실패: {e}. DB 조회 없이 날짜 기준으로만 동작합니다.")
-    engine = None
+engine = create_engine(DATABASE_URL, client_encoding='utf8')
 
-TODAY = date.today()
-CURRENT_YEAR = TODAY.year
+# 4. 시간 맥락 설정
+def get_current_context_date():
+    if ADMIN_MODE and ADMIN_DATE_STR:
+        try:
+            return datetime.strptime(ADMIN_DATE_STR, "%Y-%m-%d").date()
+        except ValueError:
+            return date.today()
+    return date.today()
 
-# --- 2. DB 기반 시즌 모드 자동 판별 로직 ---
+CURRENT_DATE = get_current_context_date()
 
-def is_regular_season_finished():
-    """DB를 조회하여 모든 정규시즌 경기가 종료되었는지 확인합니다."""
-    if engine is None:
-        print("⚠️ DB에 연결할 수 없어 시즌 종료 여부를 확인할 수 없습니다. 시즌이 진행 중인 것으로 간주합니다.")
-        return False  # DB 연결 실패 시, 안전하게 시즌 진행 중으로 처리
+# 5. KBO 도메인 상수 (전 구단 확장)
+TEAMS = ['삼성', 'KIA', 'LG', 'KT', '두산', 'SSG', '롯데', '한화', '키움', 'NC']
 
-    try:
-        # '경기전' 또는 '예정' 상태인 정규시즌 경기가 남아있는지 확인
-        # (테이블/컬럼명은 실제 프로젝트에 맞게 수정 필요)
-        query = text("SELECT COUNT(*) FROM kbo_schedule WHERE game_status IN ('경기전', '예정')")
-        with engine.connect() as conn:
-            remaining_games = conn.execute(query).scalar_one_or_none()
-        
-        # 남은 경기가 0이면 True (시즌 종료), 아니면 False (시즌 진행 중)
-        return remaining_games == 0
-    except Exception as e:
-        print(f"⚠️ 시즌 종료 여부 확인 중 DB 오류: {e}. 안전하게 시즌 진행 중으로 처리합니다.")
-        return False
-
+# AI 모델 피처 정의
+FEATURE_CONFIG = {
+    "categorical": ["home_team", "away_team"], # 팀명 유지 시
+    "numerical": [
+        "home_elo", "away_elo", 
+        "home_form", "away_form", 
+        "home_streak", "away_streak",
+        "home_pythagorean", "away_pythagorean",
+        "home_recent_rd", "away_recent_rd",
+        "rest_diff",
+        # 🚀 추가된 피처들
+        "home_matchup_rd",  # 
+        "away_matchup_rd", 
+        "season_matchup_count"
+    ],
+    "target": "home_team_win"
+}
+# 6. 데이터 기반 시즌 모드 결정 로직
 def get_season_mode():
-    """DB 상태와 현재 날짜를 종합하여 최적의 시즌 모드를 결정합니다."""
-    # 1순위: DB에 남은 정규시즌 경기가 있다면, 무조건 'season' 모드
-    if not is_regular_season_finished():
+    """
+    DB의 경기 데이터를 조회하여 현재 시즌의 상태를 판별합니다.
+    """
+    try:
+        with engine.connect() as conn:
+            # 1) 정규시즌 종료 여부 확인 (정규시즌 경기 720개 완료 여부)
+            # sr_id=0은 정규시즌을 의미 (KBO 기준)
+            res = conn.execute(text(f"""
+                SELECT COUNT(*) FROM {TABLE_KBO_GAMES} 
+                WHERE is_postseason = FALSE 
+                AND EXTRACT(YEAR FROM game_date) = :year
+                AND game_date <= :today
+            """), {"year": CURRENT_DATE.year, "today": CURRENT_DATE}).scalar()
+            
+            print(f"DEBUG: {CURRENT_DATE.year}년 {CURRENT_DATE} 기준 정규시즌 경기 수: {res}")
+            
+            if res < 720:
+                return "season"
+
+            # 2) 포스트시즌 종료 여부 확인 (한국시리즈 우승팀 탄생 여부)
+            # 포스트시즌 경기 중 어떤 팀이든 4승을 거뒀는지 확인
+            # (실제로는 시리즈별 승수를 체크해야 하나, 시연용으로 한국시리즈 7차전 기간 등을 고려)
+            ks_res = conn.execute(text(f"""
+                SELECT winning_team, COUNT(*) as wins 
+                FROM {TABLE_KBO_GAMES} 
+                WHERE is_postseason = TRUE 
+                AND EXTRACT(YEAR FROM game_date) = :year
+                GROUP BY winning_team
+                HAVING COUNT(*) >= 4
+            """), {"year": CURRENT_DATE.year}).fetchone()
+
+            if ks_res:
+                return "offseason"
+            
+            return "postseason"
+            
+    except Exception as e:
+        print(f"⚠️ 시즌 모드 판별 중 오류 발생 (기본값 'season' 사용): {e}")
         return "season"
 
-    # 2순위: 모든 정규시즌 경기가 끝났다면, 날짜로 포스트시즌/비시즌 구분
-    # 포스트시즌 종료일을 11월 30일로 넉넉하게 설정
-    postseason_end_date = date(CURRENT_YEAR, 11, 30)
-
-    if TODAY <= postseason_end_date:
-        return "postseason"  # 모든 경기가 끝났고, 아직 11월 30일 이전
-    else:
-        return "offseason"  # 모든 경기가 끝났고, 포스트시즌 기간도 지남
-
-# --- 3. 관리자 모드 및 최종 설정값 결정 ---
-
-# 자동 판별된 시즌 모드를 기본값으로 설정
 SEASON_MODE = get_season_mode()
-
-# .env 파일에서 관리자 설정값 읽기
-ADMIN_MODE = os.getenv("ADMIN_MODE", "false").lower() in ["true", "1", "yes"]
-ADMIN_OVERRIDE_MODE = os.getenv("ADMIN_OVERRIDE_MODE", None)
-
-# 관리자 모드가 활성화되고, 덮어쓸 모드가 지정되어 있다면 최종 SEASON_MODE를 변경
-if ADMIN_MODE and ADMIN_OVERRIDE_MODE in ["season", "postseason", "offseason"]:
-    SEASON_MODE = ADMIN_OVERRIDE_MODE
-
-# 관리자 시연용 날짜 설정 (기존 로직 유지)
-_admin_date_raw = os.getenv("ADMIN_DATE")
-ADMIN_DATE = None
-if _admin_date_raw:
-    try:
-        ADMIN_DATE = datetime.strptime(_admin_date_raw, "%Y-%m-%d").date()
-    except ValueError:
-        print(f"⚠️ ADMIN_DATE 형식이 잘못되었습니다: {_admin_date_raw}. 실제 날짜를 사용합니다.")
-
-CURRENT_DATE = ADMIN_DATE if ADMIN_MODE and ADMIN_DATE else TODAY
-
-# --- 4. 디버그 정보 출력 ---
-print("--- [Config Initialized] ---")
-print(f"🔧 ADMIN_MODE: {ADMIN_MODE}")
-if ADMIN_MODE:
-    print(f"🕹️ ADMIN_OVERRIDE_MODE: {ADMIN_OVERRIDE_MODE}")
-    print(f"📅 ADMIN_DATE: {ADMIN_DATE}")
-    print(f"💾 DATA_SOURCE: {DATA_SOURCE}")
-print(f"🕒 CURRENT_DATE: {CURRENT_DATE}")
-print(f"🏟️ FINAL SEASON_MODE: {SEASON_MODE}")
-print("----------------------------")
+print(f"📅 현재 시스템 모드: {SEASON_MODE.upper()} (기준일: {CURRENT_DATE})")

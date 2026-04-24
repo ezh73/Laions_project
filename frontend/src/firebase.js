@@ -5,7 +5,7 @@ import { initializeApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
   signOut,
   setPersistence,              // <-- 1. setPersistence 추가
   browserSessionPersistence    // <-- 2. browserSessionPersistence 추가
@@ -28,21 +28,18 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 💡 [핵심 수정] Google login popup 함수를 async/await 구조로 변경합니다.
+// 💡 [핵심 수정] Google login redirect 함수로 변경합니다.
 export const loginWithGoogle = async () => {
   try {
     // ▼▼▼ 로그인 실행 직전에 이 코드를 추가합니다. ▼▼▼
     // 로그인 정보 저장 방식을 'session'으로 설정합니다.
-    // 이렇게 하면 브라우저를 닫을 때 로그인 정보가 자동으로 사라집니다.
     await setPersistence(auth, browserSessionPersistence);
 
-    // 이제 구글 로그인을 실행합니다.
-    const result = await signInWithPopup(auth, provider);
-    console.log("구글 로그인 성공 (세션 유지 모드):", result.user);
-    return result; // 전체 result 객체를 반환하거나 result.user를 반환할 수 있습니다.
+    // 이제 구글 로그인을 리디렉션으로 실행합니다.
+    await signInWithRedirect(auth, provider);
 
   } catch (error) {
-    console.error("구글 로그인 실패:", error);
+    console.error("구글 로그인 시작 실패:", error);
     throw error;
   }
 };
