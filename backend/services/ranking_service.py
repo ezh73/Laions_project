@@ -7,14 +7,11 @@ import logging
 # Firestore 및 설정 로드
 from firebase_config import db_fs
 from firebase_admin import firestore
-from config import engine, CURRENT_DATE, ADMIN_MODE
+from config import engine, CURRENT_DATE, ADMIN_MODE, TABLE_KBO_GAMES, TABLE_AI_PREDICTIONS
 from auth_utils import verify_admin_api_key
 
 router = APIRouter(prefix="/api/ranking", tags=["ranking"])
 logger = logging.getLogger(__name__)
-
-# 모드에 따른 컬렉션 분리
-COLLECTION_USERS = "users_admin" if ADMIN_MODE else "users"
 
 # --- 점수 정책 설정 (스케일링) ---
 SCORE_POLICY = {
@@ -27,6 +24,11 @@ SCORE_POLICY = {
     }
 }
 
+def _get_users_collection():
+    """관리자 모드에 따라 적절한 Firestore 컬렉션명을 반환합니다. (동적 평가)"""
+    from config import ADMIN_MODE
+    return "users_admin" if ADMIN_MODE else "users"
+
 class RankingService:
     @staticmethod
     def settle_daily_points(target_date):
@@ -35,15 +37,15 @@ class RankingService:
 
         with engine.connect() as conn:
             # 1. 경기 결과 + AI 예측 결과 한 번에 가져오기 (JOIN 사용)
-            query = text("""
-                SELECT 
-                    g.game_id, 
+            query = text(f"""
+                SELECT
+                    g.game_id,
                     g.winning_team,
                     a.predicted_winner as ai_pick
-                FROM kbo_games g
-                LEFT JOIN ai_predictions a ON g.game_id = a.game_id
-                WHERE g.game_date = :target_date 
-                  AND g.winning_team IS NOT NULL 
+                FROM {TABLE_KBO_GAMES} g
+                LEFT JOIN {TABLE_AI_PREDICTIONS} a ON g.game_id = a.game_id
+                WHERE g.game_date = :target_date
+                  AND g.winning_team IS NOT NULL
                   AND g.winning_team != '무승부'
             """)
             results = conn.execute(query, {"target_date": target_date}).fetchall()
@@ -62,8 +64,8 @@ class RankingService:
             # 2. 유저들의 모든 예측 데이터 가져오기
             game_ids = tuple(truth_table.keys())
             user_preds = conn.execute(text("""
-                SELECT user_id, game_id, predicted_winner 
-                FROM user_predictions 
+                SELECT user_id, game_id, predicted_winner
+                FROM user_predictions
                 WHERE game_id IN :game_ids
             """), {"game_ids": game_ids}).fetchall()
 
@@ -103,9 +105,10 @@ class RankingService:
     @classmethod
     def _update_firestore_scores(cls, user_points_map, source_type):
         """Firestore에 주간 및 누적 점수를 반영합니다."""
+        collection_name = _get_users_collection()
         batch = db_fs.batch()
         for uid, points in user_points_map.items():
-            user_ref = db_fs.collection(COLLECTION_USERS).document(uid)
+            user_ref = db_fs.collection(collection_name).document(uid)
             batch.set(user_ref, {
                 "total_score": firestore.Increment(points),
                 "weekly_score": firestore.Increment(points),
@@ -117,7 +120,8 @@ class RankingService:
     @staticmethod
     def reset_weekly_ranking():
         """주간 랭킹 초기화 (매주 월요일 0시 호출용)"""
-        users_ref = db_fs.collection(COLLECTION_USERS)
+        collection_name = _get_users_collection()
+        users_ref = db_fs.collection(collection_name)
         docs = users_ref.where("weekly_score", ">", 0).stream()
         
         batch = db_fs.batch()
@@ -125,3 +129,51 @@ class RankingService:
             batch.update(doc.reference, {"weekly_score": 0})
         batch.commit()
         return {"status": "reset_done"}
+
+
+# ============================================================
+# API Endpoints
+# ============================================================
+
+@router.get("/top")
+def get_top_ranking(limit: int = 10):
+    """Firestore에서 전체 랭킹 상위 N명을 조회합니다."""
+    try:
+        users_ref = db_fs.collection(COLLECTION_USERS)
+        docs = users_ref.order_by("total_score", direction=firestore.Query.DESCENDING).limit(limit).stream()
+        rankings = []
+        for doc in docs:
+            data = doc.to_dict()
+            rankings.append({
+                "user_id": doc.id,
+                "nickname": data.get("nickname", "익명"),
+                "total_score": data.get("total_score", 0),
+                "weekly_score": data.get("weekly_score", 0),
+                "prediction_score": data.get("prediction_score", 0),
+                "quiz_score": data.get("quiz_score", 0)
+            })
+        return {"status": "ok", "rankings": rankings}
+    except Exception as e:
+        logger.error(f"랭킹 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"랭킹 조회 실패: {str(e)}")
+
+
+@router.get("/weekly")
+def get_weekly_ranking(limit: int = 10):
+    """Firestore에서 주간 랭킹 상위 N명을 조회합니다."""
+    try:
+        users_ref = db_fs.collection(COLLECTION_USERS)
+        docs = users_ref.order_by("weekly_score", direction=firestore.Query.DESCENDING).limit(limit).stream()
+        rankings = []
+        for doc in docs:
+            data = doc.to_dict()
+            rankings.append({
+                "user_id": doc.id,
+                "nickname": data.get("nickname", "익명"),
+                "total_score": data.get("total_score", 0),
+                "weekly_score": data.get("weekly_score", 0)
+            })
+        return {"status": "ok", "rankings": rankings}
+    except Exception as e:
+        logger.error(f"주간 랭킹 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"주간 랭킹 조회 실패: {str(e)}")

@@ -1,9 +1,9 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router } from 'react-router-dom';
 import { Container, CssBaseline, CircularProgress, Box } from '@mui/material';
 
-import { auth } from './firebase';
+import { onAuthStateChangedListener } from './firebase';
 import Navbar from './components/Navbar';
 import Dashboard from './pages/Dashboard'; // 👈 Dashboard 페이지를 임포트
 import LoginPage from './pages/LoginPage';
@@ -13,7 +13,8 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(currentUser => {
+    // Firebase 인증 상태 변경 구독 (redirect 로그인 결과도 자동 감지)
+    const unsubscribe = onAuthStateChangedListener(currentUser => {
       setUser(currentUser);
       setLoading(false);
     });

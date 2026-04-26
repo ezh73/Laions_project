@@ -69,27 +69,40 @@ def get_season_mode():
     try:
         with engine.connect() as conn:
             # 1) 정규시즌 종료 여부 확인 (정규시즌 경기 720개 완료 여부)
-            # sr_id=0은 정규시즌을 의미 (KBO 기준)
-            res = conn.execute(text(f"""
-                SELECT COUNT(*) FROM {TABLE_KBO_GAMES} 
-                WHERE is_postseason = FALSE 
+            # is_postseason = FALSE 인 경기만 정규시즌으로 카운트
+            regular_count = conn.execute(text(f"""
+                SELECT COUNT(*) FROM {TABLE_KBO_GAMES}
+                WHERE is_postseason = FALSE
                 AND EXTRACT(YEAR FROM game_date) = :year
                 AND game_date <= :today
             """), {"year": CURRENT_DATE.year, "today": CURRENT_DATE}).scalar()
             
-            print(f"DEBUG: {CURRENT_DATE.year}년 {CURRENT_DATE} 기준 정규시즌 경기 수: {res}")
+            print(f"DEBUG: {CURRENT_DATE.year}년 {CURRENT_DATE} 기준 정규시즌 경기 수: {regular_count}")
             
-            if res < 720:
+            if regular_count < 720:
                 return "season"
 
-            # 2) 포스트시즌 종료 여부 확인 (한국시리즈 우승팀 탄생 여부)
-            # 포스트시즌 경기 중 어떤 팀이든 4승을 거뒀는지 확인
-            # (실제로는 시리즈별 승수를 체크해야 하나, 시연용으로 한국시리즈 7차전 기간 등을 고려)
-            ks_res = conn.execute(text(f"""
-                SELECT winning_team, COUNT(*) as wins 
-                FROM {TABLE_KBO_GAMES} 
-                WHERE is_postseason = TRUE 
+            # 2) 포스트시즌 경기 수 확인
+            postseason_count = conn.execute(text(f"""
+                SELECT COUNT(*) FROM {TABLE_KBO_GAMES}
+                WHERE is_postseason = TRUE
                 AND EXTRACT(YEAR FROM game_date) = :year
+                AND game_date <= :today
+            """), {"year": CURRENT_DATE.year, "today": CURRENT_DATE}).scalar()
+
+            # 포스트시즌 경기가 없으면 아직 포스트시즌 시작 전 (정규시즌 막 종료)
+            if postseason_count == 0:
+                return "postseason"
+
+            # 3) 포스트시즌 종료 여부 확인 (한국시리즈 우승팀 탄생 여부)
+            # 포스트시즌 경기 중 어떤 팀이든 4승을 거뒀는지 확인
+            ks_res = conn.execute(text(f"""
+                SELECT winning_team, COUNT(*) as wins
+                FROM {TABLE_KBO_GAMES}
+                WHERE is_postseason = TRUE
+                AND EXTRACT(YEAR FROM game_date) = :year
+                AND winning_team IS NOT NULL
+                AND winning_team != '무승부'
                 GROUP BY winning_team
                 HAVING COUNT(*) >= 4
             """), {"year": CURRENT_DATE.year}).fetchone()

@@ -141,11 +141,16 @@ class CrawlerService:
         today = CURRENT_DATE
         yesterday = today - timedelta(days=1)
         
+        sr_ids_all = f"{REGULAR_SR_IDS},{POSTSEASON_SR_IDS}"
+        
         # 1. 어제 결과 업데이트 (kbo_games)
-        rows = cls._fetch_from_kbo(yesterday.year, yesterday.month, f"{REGULAR_SR_IDS},{POSTSEASON_SR_IDS}")
+        rows = cls._fetch_from_kbo(yesterday.year, yesterday.month, sr_ids_all)
         updated_count = 0
         for r in rows:
-            game, _ = cls._parse_game_row(r, is_postseason=("0" not in REGULAR_SR_IDS))
+            # sr_ids_all에 정규시즌 ID("0")만 있는지, 포스트시즌 ID도 포함되었는지 확인
+            # "0"만 있으면 정규시즌, 그 외 ID가 포함되었으면 포스트시즌
+            is_ps = (sr_ids_all != REGULAR_SR_IDS)
+            game, _ = cls._parse_game_row(r, is_postseason=is_ps)
             if game and game['game_date'] == yesterday and game['winning_team']:
                 with engine.begin() as conn:
                     conn.execute(text(f"""
@@ -160,10 +165,11 @@ class CrawlerService:
 
         # 2. 향후 일정 업데이트 (kbo_schedule)
         # 오늘 포함 향후 7일간의 일정을 긁어옴
-        schedule_rows = cls._fetch_from_kbo(today.year, today.month, f"{REGULAR_SR_IDS},{POSTSEASON_SR_IDS}")
+        schedule_rows = cls._fetch_from_kbo(today.year, today.month, sr_ids_all)
         scheduled_count = 0
         for r in schedule_rows:
-            game, _ = cls._parse_game_row(r)
+            is_ps = (sr_ids_all != REGULAR_SR_IDS)
+            game, _ = cls._parse_game_row(r, is_postseason=is_ps)
             if game and game['game_date'] >= today:
                 with engine.begin() as conn:
                     conn.execute(text(f"""

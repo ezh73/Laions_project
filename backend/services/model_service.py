@@ -142,19 +142,30 @@ class ModelPipeline:
         # 1. 데이터 로드 및 전처리
         raw_df = cls.load_data_from_db()
         
-        # 오프시즌 여부에 따른 데이터 범위 설정
+        # 2. 학습 데이터 범위 설정 (검증셋 없이 전체 데이터 사용)
+        #    - 최초 모델: 2021년부터 작년(CURRENT_DATE.year - 1)까지 학습
+        #    - 오프시즌 재학습: 2021년부터 당해(CURRENT_DATE.year)까지 학습
+        current_year = CURRENT_DATE.year
         season_mode = get_season_mode()
-        if season_mode != "offseason":
-            # 2025년 시즌 데이터까지만 학습 (2026년 1월 1일 이전)
-            df_to_train = raw_df[raw_df['game_date'] < datetime(2026, 1, 1).date()]
+        
+        if season_mode == "offseason":
+            # 오프시즌: 2021 ~ 당해 시즌 전체 데이터로 재학습
+            # (예: 2026년 오프시즌 → 2021~2026년 데이터)
+            df_to_train = raw_df[raw_df['game_date'].dt.year <= current_year]
+            print(f"🔄 오프시즌 재학습: 2021~{current_year}년 데이터 ({len(df_to_train)}건)")
         else:
-            # 오프시즌인 경우 전체 데이터 사용
-            df_to_train = raw_df
+            # 시즌 중: 2021 ~ 작년 데이터로 학습 (당해 시즌 데이터는 미포함)
+            # (예: 2026년 시즌 중 → 2021~2025년 데이터)
+            df_to_train = raw_df[raw_df['game_date'].dt.year < current_year]
+            print(f"🔄 시즌 중 학습: 2021~{current_year-1}년 데이터 ({len(df_to_train)}건)")
+
+        if df_to_train.empty:
+            raise ValueError("❌ 학습할 데이터가 없습니다. 최소 2021년 이후 데이터가 필요합니다.")
 
         X_train = ModelPreprocessor.preprocess_data(df_to_train)
         y_train = df_to_train["home_team_win"]
         
-        # 2. LightGBM 모델 세팅 및 학습
+        # 3. LightGBM 모델 세팅 및 학습
         model = lgb.LGBMClassifier(
             n_estimators=500,
             learning_rate=0.01,
@@ -167,8 +178,9 @@ class ModelPipeline:
         
         model.fit(X_train, y_train)
 
-        # 3. 모델 저장
+        # 4. 모델 저장
         joblib.dump(model, MODEL_PATH)
+        print(f"✅ 모델 저장 완료: {MODEL_PATH}")
 
 @router.get("/all")
 def get_all_predictions():

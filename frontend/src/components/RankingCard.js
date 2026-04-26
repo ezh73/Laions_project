@@ -1,7 +1,7 @@
 // src/components/RankingCard.js
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, CircularProgress, Typography } from '@mui/material';
-import { getWeeklyRanking } from '../api/apiClient';
+import { getWeeklyRanking } from '../api/rankingApi';
 
 export default function RankingCard() {
   const [ranking, setRanking] = useState([]);
@@ -11,8 +11,9 @@ export default function RankingCard() {
     const fetchRanking = async () => {
       setLoading(true);
       try {
-        const response = await getWeeklyRanking(5); // Top 5
-        setRanking(response.data); // 👈 수정: response.data.ranking에서 response.data로 변경
+        const response = await getWeeklyRanking(5);
+        // API 응답: {status: "ok", rankings: [{user_id, nickname, total_score, weekly_score}, ...]}
+        setRanking(response.data.rankings || []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -42,7 +43,7 @@ export default function RankingCard() {
                 {ranking.map((user, index) => (
                   <TableRow key={index}>
                     <TableCell>{index + 1}</TableCell>
-                    <TableCell>{user.display_name}</TableCell>
+                    <TableCell>{user.nickname || user.user_id}</TableCell>
                     <TableCell>{user.weekly_score}</TableCell>
                   </TableRow>
                 ))}

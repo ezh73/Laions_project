@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { Card, CardContent, Typography, Box, CircularProgress, Alert } from "@mui/material";
-import { getAiPerformance, getSimulationReport } from "../api/apiClient";
+import { getAiPerformance, getSimulationReport } from "../api/performanceApi";
 
 const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
     const [performance, setPerformance] = useState(null);
@@ -15,17 +15,18 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
             setError(null);
             try {
                 let response;
-                // 1순위: 비시즌 모드일 경우, 관리자 모드 여부와 상관없이 무조건 일반 API 호출
                 if (seasonMode === 'offseason') {
                     response = await getAiPerformance();
-                } 
-                // 2순위: 비시즌이 아닐 때만 관리자 모드 여부를 따짐
-                else {
+                } else {
                     response = isAdminMode
                         ? await getSimulationReport()
                         : await getAiPerformance();
                 }
-                setPerformance(response.data);
+                // API 응답 구조 통일: response.data 아래에 실제 데이터
+                // getAiPerformance: {status: "ok", data: {accuracy, total_games, correct_predictions, recent_results}}
+                // getSimulationReport: {status: "ok", report: {projections, summary, admin_mode, current_date}}
+                const data = response.data?.data || response.data?.report || response.data;
+                setPerformance(data);
 
             } catch (err) {
                 console.error("AI Performance fetch error:", err);
@@ -35,11 +36,10 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
             }
         };
 
-        // seasonMode 값이 정해진 후에 API를 호출하도록 함
         if (seasonMode) {
           fetchPerformance();
         }
-    }, [isAdminMode, seasonMode]); // isAdminMode 또는 seasonMode가 바뀔 때마다 다시 실행
+    }, [isAdminMode, seasonMode]);
 
     if (loading) {
         return (
@@ -71,39 +71,21 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
                 </Typography>
                 
                 {isAdminMode && seasonMode !== 'offseason' ? (
-                    // 관리자 모드이면서 비시즌이 아닐 때 (시뮬레이션 리포트)
+                    // 시뮬레이션 리포트 모드 (관리자)
                     <Box textAlign="center" p={2}>
                         <Typography variant="body1" color="text.secondary">
                             모드: <strong>시뮬레이션 리포트</strong>
                         </Typography>
                         <Typography variant="body1" color="text.secondary">
-                            전체 경기: {performance.total_games}경기 중{" "}
-                            {performance.correct_predictions}적중
+                            {performance.summary || "시뮬레이션 완료"}
                         </Typography>
-                        <Typography variant="h5" color="primary" sx={{ mt: 1 }}>
-                            <strong>{performance.accuracy?.toFixed(2)}%</strong>
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                            ({performance.report_date} 기준)
-                        </Typography>
-                    </Box>
-                ) : performance.mode === "offseason" ? (
-                    // 비시즌 (일반 모드 또는 관리자 모드)
-                    <Box textAlign="center" p={2}>
-                        <Typography variant="body1" color="text.secondary">
-                            모델명: <strong>{performance.model_name || "LightGBM (Tuned)"}</strong>
-                        </Typography>
-                        <Typography variant="body1" color="text.secondary">
-                            검증 기준 정확도: <strong>{performance.model_accuracy || 61.97}%</strong>
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                            (시즌 종료 상태)
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            ({performance.current_date || ""} 기준)
                         </Typography>
                     </Box>
                 ) : (
-                    // 시즌 중 / 포스트시즌 (일반 모드)
+                    // 일반 AI 성능 모드
                     <Box textAlign="center" p={2}>
-                        {/* 💡 시즌 첫날처럼 누적 데이터가 없을 때의 UI 처리 */}
                         {performance.total_games === 0 ? (
                             <>
                                 <Typography variant="body1" color="text.secondary">
@@ -116,15 +98,11 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
                         ) : (
                             <>
                                 <Typography variant="body1" color="text.secondary">
-                                  팀: <strong>{performance.team}</strong>
-                                </Typography>
-                                <Typography variant="body1" color="text.secondary">
                                   누적 정확도 ({performance.total_games}경기):{" "}
-                                  <strong>{performance.total_accuracy?.toFixed(2)}%</strong>
+                                  <strong>{performance.accuracy?.toFixed(1)}%</strong>
                                 </Typography>
                                 <Typography variant="body1" color="text.secondary">
-                                  최근 {performance.recent_games}경기 정확도:{" "}
-                                  <strong>{performance.recent_accuracy?.toFixed(2)}%</strong>
+                                  ({performance.correct_predictions}적중 / {performance.total_games}경기)
                                 </Typography>
                             </>
                         )}

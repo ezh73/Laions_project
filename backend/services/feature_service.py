@@ -171,7 +171,7 @@ class FeatureService:
             matchup_stats[away][home]['allowed'] += h_score
             matchup_stats[away][home]['count'] += 1
 
-        # 4. DB 저장
+        # 4. DB 저장 (DELETE FROM 사용: CASCADE 없이 안전하게 전체 삭제 후 재삽입)
         columns = list(final_features[0].keys())
         query = f"INSERT INTO {TABLE_MATCH_FEATURES} ({', '.join(columns)}) VALUES %s"
         values = [tuple(row[col] for col in columns) for row in final_features]
@@ -179,7 +179,8 @@ class FeatureService:
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cursor:
-                cursor.execute(f"TRUNCATE TABLE {TABLE_MATCH_FEATURES} CASCADE")
+                # TRUNCATE CASCADE 대신 DELETE 사용 (외래키 CASCADE 삭제 방지)
+                cursor.execute(f"DELETE FROM {TABLE_MATCH_FEATURES}")
                 psycopg2.extras.execute_values(cursor, query, values)
                 conn.commit()
         finally:

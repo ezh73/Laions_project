@@ -3,7 +3,10 @@ import React from 'react';
 import { Card, CardContent, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography, Alert } from '@mui/material';
 
 export default function SeasonProjectionCard({ projection }) {
-    if (!projection || !projection.ranking_projection) {
+    // API 응답: {status: "ok", data: [{team, expected_win_rate, expected_wins, predicted_rank}, ...]}
+    const rankings = projection?.data || [];
+
+    if (!rankings || rankings.length === 0) {
         return <Alert severity="warning">시즌 예측 데이터를 불러올 수 없습니다.</Alert>;
     }
 
@@ -11,7 +14,7 @@ export default function SeasonProjectionCard({ projection }) {
         <Card>
             <CardContent>
                 <Typography variant="h5" sx={{ mb: 2 }}>
-                    {projection.title || '⚾ 다음 시즌 최종 순위 예측'}
+                    ⚾ 다음 시즌 최종 순위 예측
                 </Typography>
                 <TableContainer>
                     <Table size="small">
@@ -19,18 +22,17 @@ export default function SeasonProjectionCard({ projection }) {
                             <TableRow>
                                 <TableCell sx={{ fontWeight: 'bold' }}>예상 순위</TableCell>
                                 <TableCell sx={{ fontWeight: 'bold' }}>팀 이름</TableCell>
-                                {/* ✨ [수정] 헤더를 '예상 성적'으로 변경 */}
-                                <TableCell sx={{ fontWeight: 'bold' }}>예상 성적</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold' }}>예상 승률</TableCell>
+                                <TableCell sx={{ fontWeight: 'bold' }}>예상 승수</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {projection.ranking_projection.map((team, index) => (
+                            {rankings.map((team, index) => (
                                 <TableRow key={team.team}>
-                                    {/* ✨ [수정] 불필요한 평균 순위 텍스트 제거 */}
-                                    <TableCell>{index + 1}</TableCell>
+                                    <TableCell>{team.predicted_rank || index + 1}</TableCell>
                                     <TableCell>{team.team}</TableCell>
-                                    {/* ✨ [수정] '예상 승수'와 '예상 패수'를 함께 표시 */}
-                                    <TableCell>{Math.round(team.avg_wins)}승 {Math.round(team.avg_losses)}패</TableCell>
+                                    <TableCell>{(team.expected_win_rate * 100).toFixed(1)}%</TableCell>
+                                    <TableCell>{team.expected_wins}승</TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>

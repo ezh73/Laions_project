@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 from auth_utils import verify_admin_api_key
 from config import CURRENT_DATE
+import config as config_module
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -13,10 +14,31 @@ class AdminService:
 
     @staticmethod
     def set_date(new_date: str):
-        """관리자 날짜를 변경합니다 (일시적)."""
-        # Note: This is a simplified implementation as actual environment variable update 
-        # would require a more complex setup.
-        return {"status": "ok", "message": f"Date management updated (Target: {new_date})"}
+        """관리자 날짜를 변경합니다 (일시적, 서버 재시작 시 초기화)."""
+        from datetime import datetime
+        try:
+            # 날짜 형식 검증
+            parsed_date = datetime.strptime(new_date, "%Y-%m-%d").date()
+            
+            # config 모듈의 ADMIN_DATE_STR과 CURRENT_DATE를 동적으로 변경
+            config_module.ADMIN_DATE_STR = new_date
+            config_module.CURRENT_DATE = parsed_date
+            
+            # ADMIN_MODE가 False면 True로 변경 (관리자 모드 활성화)
+            if not config_module.ADMIN_MODE:
+                config_module.ADMIN_MODE = True
+                print(f"🔑 [Admin] 관리자 모드가 활성화되었습니다.")
+            
+            print(f"📅 [Admin] 날짜가 {new_date}(으)로 변경되었습니다.")
+            return {
+                "status": "ok",
+                "message": f"날짜가 {new_date}(으)로 변경되었습니다.",
+                "current_date": new_date,
+                "admin_mode": True
+            }
+        except ValueError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=f"잘못된 날짜 형식: {new_date}. YYYY-MM-DD 형식이어야 합니다.")
 
 # --- API Endpoints ---
 

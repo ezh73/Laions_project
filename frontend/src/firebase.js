@@ -1,14 +1,14 @@
 // src/firebase.js
 
 import { initializeApp } from "firebase/app";
-// 💡 [핵심 수정] 필요한 함수들을 firebase/auth에서 모두 가져옵니다.
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithRedirect,
+  signInWithPopup,
   signOut,
-  setPersistence,              // <-- 1. setPersistence 추가
-  browserSessionPersistence    // <-- 2. browserSessionPersistence 추가
+  setPersistence,
+  browserLocalPersistence,
+  onAuthStateChanged
 } from "firebase/auth";
 
 // Environment variables are automatically loaded from the .env file
@@ -28,34 +28,26 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 
-// 💡 [핵심 수정] Google login redirect 함수로 변경합니다.
+// 앱 초기화 시점에 persistence 설정 (login 호출보다 먼저 적용)
+setPersistence(auth, browserLocalPersistence);
+
+// Google login with popup (redirect 대신 popup 사용)
 export const loginWithGoogle = async () => {
   try {
-    // ▼▼▼ 로그인 실행 직전에 이 코드를 추가합니다. ▼▼▼
-    // 로그인 정보 저장 방식을 'session'으로 설정합니다.
-    await setPersistence(auth, browserSessionPersistence);
-
-    // 이제 구글 로그인을 리디렉션으로 실행합니다.
-    await signInWithRedirect(auth, provider);
-
+    const result = await signInWithPopup(auth, provider);
+    return result.user;
   } catch (error) {
-    console.error("구글 로그인 시작 실패:", error);
+    console.error("구글 로그인 실패:", error);
     throw error;
   }
 };
 
-// Logout function (기존 함수와 동일, 두 개 중 하나만 남기셔도 됩니다)
-export const logout = () => {
-  return signOut(auth);
+// Firebase auth state observer (App.js에서 사용)
+export const onAuthStateChangedListener = (callback) => {
+  return onAuthStateChanged(auth, callback);
 };
 
-export const logoutUser = async () => {
-    const auth = getAuth();
-    try {
-        await signOut(auth);
-        console.log("로그아웃 성공");
-    } catch (error) {
-        console.error("로그아웃 실패:", error);
-        throw error;
-    }
+// Logout function (통일)
+export const logout = () => {
+  return signOut(auth);
 };

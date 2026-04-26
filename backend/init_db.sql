@@ -77,15 +77,19 @@ CREATE TABLE user_predictions (
     CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES user_rankings(user_id) ON DELETE CASCADE
 );
 
--- 2.3. 유저 퀴즈 참여 기록
+-- 2.3. 유저 퀴즈 참여 기록 (일일 제한 확인용)
 CREATE TABLE user_quizzes (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL,
-    quiz_id VARCHAR(50),             -- 퀴즈 고유 ID (날짜 등)
+    quiz_id INTEGER NOT NULL,        -- samfan_quizzes.id 참조
+    quiz_date DATE NOT NULL,         -- 퀴즈를 푼 날짜 (일일 제한 확인용)
+    is_correct BOOLEAN NOT NULL,     -- 정답 여부
     score_earned INTEGER NOT NULL,   -- 획득 점수
     taken_at TIMESTAMP DEFAULT NOW(),
     CONSTRAINT fk_user_quiz FOREIGN KEY (user_id) REFERENCES user_rankings(user_id) ON DELETE CASCADE
 );
+
+CREATE INDEX idx_user_quizzes_date ON user_quizzes(user_id, quiz_date);
 
 ---------------------------------------------------------
 -- 3. 기타 일정 및 순위
