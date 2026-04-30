@@ -195,3 +195,11 @@ def get_today_history():
 - **DeepSeek은 퀴즈 생성용으로만 사용** (기존 리팩토링 계획 유지)
 - Web Search가 필요한 기능은 비용/데이터 문제로 보류
 - `idea.md`는 원본 보존, `plans/idea_feasibility_analysis.md`에서 최종 결정 사항 관리
+
+
+
+
+
+
+# 중요 문제 발견
+- 지금까지 사용하던 스크래핑 방식인 /ws/ 사용이 kbo robots.txt에서 허락하지 않는 방식임, 스크래핑 방식 자체를 전면 수정해야함
