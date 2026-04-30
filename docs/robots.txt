@@ -1,0 +1,63 @@
+# kbo
+User-agent: *
+Disallow: /Common/
+Disallow: /Help/
+Disallow: /Member/
+Disallow: /ws/
+
+# 네이버 스포츠
+
+User-agent: *
+Disallow: /
+Allow: /$
+Allow: /index
+
+User-agent: Yeti
+Allow: /
+
+
+
+# 다음 스포츠
+
+User-agent: *
+Disallow: /media-api/
+Disallow: /prx/
+
+
+
+
+
+# 스탯티즈
+# Google 허용
+User-agent: Googlebot
+Disallow:
+Crawl-delay: 5
+
+# Naver 허용
+User-agent: Yeti
+Disallow:
+Crawl-delay: 5
+
+# Bing 허용
+User-agent: Bingbot
+Disallow:
+Crawl-delay: 5
+
+User-agent: Mediapartners-Google
+Disallow:
+
+# 그 외 모든 봇 차단
+User-agent: *
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+
+
+
+사이트,스크래핑 권장도,분석 결과
+KBO 공식,높음 (주의필요),"/Record/, /Schedule/ 등 핵심 경로가 열려 있습니다. 다만, 이전에 말씀드린 /ws/ 경로는 명시적 차단 상태이므로 HTML 파싱 방식을 권장합니다."
+네이버 스포츠,매우 낮음,사실상 전면 차단입니다. 일반 사용자(*)에게는 메인(/$)과 인덱스만 허용하고 나머지는 Disallow: /로 막았습니다. 네이버 검색봇(Yeti)만 허용하겠다는 의지가 강합니다.
+다음 스포츠,매우 높음,"가장 개방적입니다. /media-api/와 /prx/라는 특정 경로만 막아두었을 뿐, 경기 기록이나 일정 페이지에 대한 제한이 없습니다."
+스탯티즈,(제외),말씀하신 대로 일반 봇(*)에 대해 Disallow: /로 전면 차단 상태입니다.
