@@ -1,20 +1,18 @@
-print("Script started")
 import os
 import json
 import random
 import re
 import time
+import urllib.parse
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import google.generativeai as genai
+from datetime import datetime
 
 # --- 1. 환경 설정 ---
 load_dotenv(dotenv_path=".env")
-print("Load dotenv done")
 DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-print(f"DATABASE_URL exists: {bool(DATABASE_URL)}")
-print(f"GEMINI_API_KEY exists: {bool(GEMINI_API_KEY)}")
 
 if not DATABASE_URL or not GEMINI_API_KEY:
     raise RuntimeError("DATABASE_URL 또는 GEMINI_API_KEY가 .env에 설정되어 있지 않습니다.")
@@ -24,8 +22,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 # --- 2. JSON 파싱 ---
-def safe_parse_json(text: str):
-    match = re.search(r'\[.*\]', text, re.DOTALL)
+def safe_parse_json(text_content: str):
+    # JSON 배열 부분만 추출
+    match = re.search(r'\[.*\]', text_content, re.DOTALL)
     if not match:
         return None
     try:
@@ -33,140 +32,120 @@ def safe_parse_json(text: str):
     except json.JSONDecodeError:
         return None
 
-# --- 3. 난이도 자동 보정 ---
-def analyze_difficulty(question: str) -> str:
-    q = question.lower()
-    if any(x in q for x in ["몇", "언제", "최다", "누가", "첫", "처음"]):
-        return "쉬움"
-    elif any(x in q for x in ["시즌", "비교", "통산", "평균", "기록"]):
-        return "보통"
-    else:
-        return "어려움"
-
-# --- 4. 퀴즈 생성 ---
-def create_quizzes_from_ai(topic: str, count: int) -> list[dict] | None:
-    print(f"🧠 '{topic}' 주제로 퀴즈 {count}개 생성 중...", flush=True)
+# --- 3. 퀴즈 생성 로직 ---
+def generate_daily_quizzes() -> list[dict] | None:
+    print("🧠 오늘의 삼성 라이온즈 퀴즈(하, 중, 상) 생성 중...", flush=True)
+    today_str = datetime.now().strftime("%Y년 %m월 %d일")
+    
     prompt = f"""
-너는 KBO 기록 전문가야.
-"삼성 라이온즈"의 "{topic}"과 관련된 퀴즈를 {count}개 만들어줘.
+    너는 삼성 라이온즈의 역사를 완벽하게 꿰뚫고 있는 KBO 데이터 전문가야. 너는 1982년 KBO 출범부터 2025년까지 삼성 라이온즈의 모든 공식 기록과 역사를 정확히 알고 있고 2026년 현재 시즌({today_str} 기준) 경기 또한 매일 챙겨보며 분석하는 열성팬이기도 해.
+    오늘의 삼성 라이온즈 팬들을 위해 [쉬움, 보통, 어려움] 난이도별로 각각 1문제씩 총 3개의 객관식(4지선다) 퀴즈를 출제해 줘.
 
-⚾ 반드시 다음 규칙을 지켜:
-1. 모든 내용은 KBO 공식 기록 기준으로 정확해야 해.
-2. 추정, 루머, 팬 의견은 절대 포함하지 마.
-3. 출력은 반드시 JSON 배열만.
-4. 각 항목은 반드시 "question", "answer", "difficulty"를 포함해야 해.
-5. 난이도 기준:
-   - '쉬움': 누구나 아는 대표 기록 (홈런 수, 연도, 별명 등)
-   - '보통': 시즌별/선수별 비교 문제
-   - '어려움': 특정 경기, 세부 기록, 드문 상황 관련 문제
+    [절대 지켜야 할 규칙]
+    1. 정보의 정확성: KBO 공식 기록과 삼성 라이온즈 공식 구단 역사에 명확히 남아있는 교차 검증 가능한 사실(Fact)만 출제해. 추측, 루머는 절대 금지.
+    2. 할루시네이션 방지: `internal_verification` 필드에 해당 문제의 정답을 증명할 수 있는 구체적인 공식 기록(연도, 상대 팀, 기록 명칭 등)을 요약해서 적어. 이 필드를 작성하면서 논리적 오류가 있다면 문제를 처음부터 다시 만들어.
 
-예시:
-[
-  {{"question": "이승엽의 KBO 통산 홈런 수는?", "answer": "467개", "difficulty": "쉬움"}},
-  {{"question": "삼성 라이온즈가 첫 통합우승을 차지한 해는?", "answer": "2011년", "difficulty": "보통"}}
-]
-"""
-    try:
-        print("API 호출을 시도합니다...")
-        response = model.generate_content(prompt)
-        print("API 호출 성공!")
-        text = response.candidates[0].content.parts[0].text
-        quizzes = safe_parse_json(text)
-        if quizzes and isinstance(quizzes, list):
-            for q in quizzes:
-                if not q.get("difficulty"):
-                    q["difficulty"] = analyze_difficulty(q.get("question", ""))
-            return quizzes
-    except Exception as e:
-        print(f"❌ 퀴즈 생성 실패: {e}")
-    return None
+    3. 더 알아보기 키워드: 유저가 정답에 대해 나무위키 등에서 더 찾아볼 수 있도록, 핵심 검색 키워드(선수명, 사건명 등)를 `reference_keyword` 필드에 적어줘, 키워드가 너무 길어지면 검색이 힘드니 2~3단어 이내의 명사형으로 작성해.
 
-# --- 5. 오답 생성 ---
-def get_distractors_from_ai(question: str, correct_answer: str) -> list[str] | None:
-    prompt = f"""
-"{question}"의 정답은 "{correct_answer}"야.
-이와 헷갈릴만한 오답 3개를 만들어줘.
-오답은 같은 카테고리여야 해 (예: 연도, 선수명, 수치 등).
-JSON 배열만 출력해줘.
-"""
-    try:
-        response = model.generate_content(prompt)
-        text = response.candidates[0].content.parts[0].text
-        data = safe_parse_json(text)
-        if data and isinstance(data, list) and len(data) >= 3:
-            return data[:3]
-    except Exception as e:
-        print(f"   - ❗ 오답 생성 실패: {e}")
-    return None
+    4. 난이도별 명확한 맥락 기준 예시:
+       - "쉬움": 삼성 라이온즈 최근 인기선수 위주(구자욱, 강민호 등), 라팍 관련 상식, 이승엽/양준혁 등 레전드의 가장 유명한 기록 등 (야구장 몇 번 가본 팬 수준), 선택지의 오답이 어렵지 않게 작성
+       - "보통": 2011~2014 왕조 시절의 핵심 기록, 영구결번 선수 기록, 오랜 기간 삼성 라이온즈에서 활동한 프랜차이즈 스타의 기록 등 (꾸준히 응원한 팬 수준), 선택지의 오답은 정답과 헷갈릴 수 있게 작성
+       - "어려움": 특정 연도의 세부 스탯, 1차 지명 신인, 과거 80~90년대 기록, 특이 상황에 대한 기록 등 (위키피디아를 찾아볼 골수팬 수준), 선택지의 오답은 매력적이고 논리적으로 정답과 헷갈리도록 어렵게 작성
+       - 중복된 문제를 피하고 예시에 적힌 주제만이 아닌 투수/타자/팀기록/역사 등 다양한 카테고리를 골고루 다뤄줘.
 
-# --- 6. 메인 실행 ---
-def main():
-    search_topics = [
-        "이승엽 통산 기록", "양준혁 통산 기록", "오승환 세이브 기록",
-        "삼성 라이온즈 우승 연도", "삼성 라이온즈 역대 감독",
-        "한국시리즈 명장면", "팀 최다 홈런 시즌", "역대 외국인 선수 활약"
+    반드시 아래 JSON 형식의 배열로만 답변하고 아래 답변은 오답이 섞였으니 잘 검증하고 문제를 출제하도록 해.
+    [
+    {
+        "difficulty": "어려움",
+        "question": "2014년 한국시리즈 5차전에서 9회말 2아웃에 역전 끝내기 홈런을 친 삼성 라이온즈 선수는 누구일까요?",
+        "correct_answer": "최형우",
+        "distractors": ["이승엽", "박한이", "나바로"],
+        "explanation": "2014년 넥센 히어로즈와의 한국시리즈 5차전, 1-2로 뒤진 9회말 2아웃 1,3루 상황에서 최형우 선수가 역전 끝내기 2루타(홈런 아님, 문제 자체가 함정일 경우 스스로 수정해야 함)를 쳤습니다.",
+        "internal_verification": "2014년 KBO 한국시리즈 5차전 삼성 vs 넥센 경기 기록 (최형우 9회말 2타점 끝내기 2루타)",
+        "reference_keyword": "2014년 한국시리즈 5차전"
+
+    }
     ]
-    TARGET_QUIZ_COUNT = 5
-    total_generated = 0
+    """
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"API 호출 시도 {attempt + 1}/{max_retries}...")
+            response = model.generate_content(prompt)
+            text_content = response.candidates[0].content.parts[0].text
+            quizzes = safe_parse_json(text_content)
+            
+            if quizzes and len(quizzes) == 3:
+                return quizzes
+        except Exception as e:
+            print(f"❌ 시도 {attempt + 1} 실패: {e}")
+            time.sleep(2)
+            
+    return None
 
-    for topic in search_topics:
-        quiz_subjects = create_quizzes_from_ai(topic, TARGET_QUIZ_COUNT)
-        if not quiz_subjects:
-            print(f"⚠️ {topic} 주제에서 퀴즈 생성 실패.")
-            continue
+# --- 4. 메인 실행 및 DB 저장 ---
+def main():
+    quizzes = generate_daily_quizzes()
+    if not quizzes:
+        print("🚨 퀴즈 생성 실패")
+        return
 
-        for q in quiz_subjects:
-            question = q.get("question")
-            answer = q.get("answer")
-            difficulty = q.get("difficulty", analyze_difficulty(question))
+    success_count = 0
+    for q in quizzes:
+        question = q.get("question")
+        correct_answer = q.get("correct_answer")
+        distractors = q.get("distractors", [])
+        difficulty = q.get("difficulty")
+        explanation = q.get("explanation")
+        verification = q.get("internal_verification")
+        ref_keyword = q.get("reference_keyword", "")
 
-            if not question or not answer:
-                continue
+        # 나무위키 링크 생성 로직
+        ref_link = ""
+        if ref_keyword:
+            encoded_kw = urllib.parse.quote(ref_keyword)
+            ref_link = f"https://namu.wiki/w/{encoded_kw}"
 
+        # 중복 체크
+        with engine.connect() as conn:
+            exists = conn.execute(
+                text("SELECT 1 FROM samfan_quizzes WHERE question=:q"),
+                {"q": question}
+            ).fetchone()
+            if exists: continue
+
+        options = [str(d) for d in (distractors[:3] + [correct_answer])]
+        random.shuffle(options)
+
+        quiz_data = {
+            "question": question,
+            "options": options,
+            "correct_answer": str(correct_answer),
+            "difficulty": difficulty,
+            "explanation": explanation,
+            "internal_verification": verification,
+            "reference_link": ref_link
+        }
+
+        try:
             with engine.connect() as conn:
-                exists = conn.execute(
-                    text("SELECT 1 FROM samfan_quizzes WHERE question=:q"),
-                    {"q": question}
-                ).fetchone()
-                if exists:
-                    print(f"   - ⚠️ 중복된 문제: {question}")
-                    continue
+                stmt = text("""
+                    INSERT INTO samfan_quizzes
+                    (question, options, correct_answer, difficulty, explanation, internal_verification, reference_link)
+                    VALUES (:question, :options, :correct_answer, :difficulty, :explanation, :internal_verification, :reference_link)
+                """)
+                conn.execute(stmt, quiz_data)
+                conn.commit()
+            success_count += 1
+            print(f"   ✅ [{difficulty}] {question}")
+        except Exception as e:
+            print(f"   ❌ DB 저장 실패: {e}")
 
-            distractors = get_distractors_from_ai(question, answer)
-            if not distractors:
-                continue
-
-            # ✅ [핵심 수정] 모든 옵션을 문자열로 강제 변환하여 DB 저장 에러 방지
-            options = [str(d) for d in (distractors + [answer])]
-            random.shuffle(options)
-
-            quiz_data = {
-                "question": question,
-                "options": options,
-                "correct_answer": str(answer),
-                "difficulty": difficulty,
-                "source_hint": topic
-            }
-
-            try:
-                with engine.connect() as conn:
-                    stmt = text("""
-                        INSERT INTO samfan_quizzes
-                        (question, options, correct_answer, difficulty, source_hint)
-                        VALUES (:question, :options, :correct_answer, :difficulty, :source_hint)
-                    """)
-                    conn.execute(stmt, quiz_data)
-                    conn.commit()
-                total_generated += 1
-                print(f"   ✅ [{difficulty}] {question}")
-            except Exception as e:
-                print(f"   ❌ DB 저장 실패: {e}")
-
-            time.sleep(1.2)
-
-    print(f"\n🎉 총 {total_generated}개의 퀴즈를 DB에 저장했습니다.")
+    print(f"\n🎉 {success_count}개 저장 완료.")
 
 if __name__ == "__main__":
+    # 테이블 생성 스키마 업데이트
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS samfan_quizzes (
@@ -175,7 +154,10 @@ if __name__ == "__main__":
                 options TEXT[],
                 correct_answer TEXT,
                 difficulty TEXT,
-                source_hint TEXT
+                explanation TEXT,
+                internal_verification TEXT,
+                reference_link TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """))
         conn.commit()
