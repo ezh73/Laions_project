@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 import pandas as pd
 from sqlalchemy import text
-from config import engine, TEAMS, FEATURE_CONFIG, TABLE_MATCH_FEATURES
+from config import engine, TEAMS, FEATURE_CONFIG
 from services.model_service import ModelService
 from services.model_preprocessor import ModelPreprocessor
 
@@ -21,7 +21,7 @@ class SimulationService:
         with engine.connect() as conn:
             for team in TEAMS:
                 query = text(f"""
-                    SELECT * FROM {TABLE_MATCH_FEATURES} 
+                    SELECT * FROM match_features
                     WHERE home_team = :team OR away_team = :team
                     ORDER BY game_date DESC LIMIT 1
                 """)

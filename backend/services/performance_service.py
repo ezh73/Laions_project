@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 from sqlalchemy import text
 import pandas as pd
-from config import engine, TABLE_AI_PREDICTIONS, TABLE_KBO_GAMES, CURRENT_DATE
+from config import engine, CURRENT_DATE
 
 router = APIRouter(prefix="/api/performance", tags=["ai performance"])
 
@@ -13,15 +13,15 @@ class PerformanceService:
         AI 예측(ai_predictions)과 실제 결과(kbo_games)를 조인하여 최근 N경기의 적중률을 계산합니다.
         """
         query = text(f"""
-            SELECT 
-                p.game_id, 
-                p.game_date, 
-                p.predicted_winner, 
+            SELECT
+                p.game_id,
+                p.game_date,
+                p.predicted_winner,
                 g.winning_team,
                 p.prediction_prob
-            FROM {TABLE_AI_PREDICTIONS} p
-            JOIN {TABLE_KBO_GAMES} g ON p.game_id = g.game_id
-            WHERE g.winning_team IS NOT NULL 
+            FROM ai_predictions p
+            JOIN kbo_games g ON p.game_id = g.game_id
+            WHERE g.winning_team IS NOT NULL
               AND g.winning_team != '무승부'
               AND p.game_date <= :today
             ORDER BY p.game_date DESC, p.game_id DESC

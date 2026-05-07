@@ -6,7 +6,7 @@ import lightgbm as lgb
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import text
-from config import engine, CURRENT_DATE, FEATURE_CONFIG, SEASON_MODE, TABLE_AI_PREDICTIONS, TABLE_KBO_SCHEDULE, TABLE_KBO_GAMES, TABLE_MATCH_FEATURES, get_season_mode
+from config import engine, CURRENT_DATE, FEATURE_CONFIG, SEASON_MODE, get_season_mode
 from auth_utils import verify_admin_api_key
 from services.feature_service import FeatureService
 from services.model_preprocessor import ModelPreprocessor
@@ -49,8 +49,8 @@ class ModelService:
         # 1. 모든 일정 가져오기
         with engine.connect() as conn:
             query = text(f"""
-                SELECT game_id, game_date, home_team, away_team 
-                FROM {TABLE_KBO_SCHEDULE}
+                SELECT game_id, game_date, home_team, away_team
+                FROM kbo_schedule
             """)
             schedules = pd.read_sql(query, conn)
 
@@ -64,7 +64,7 @@ class ModelService:
             # 2. 각 팀의 최신 피처 가져오기
             with engine.connect() as conn:
                 f_query = text(f"""
-                    SELECT * FROM {TABLE_MATCH_FEATURES} 
+                    SELECT * FROM match_features
                     WHERE game_id = :gid
                 """)
                 features = pd.read_sql(f_query, conn, params={"gid": gid})
@@ -84,7 +84,7 @@ class ModelService:
             # 5. DB 저장 (ai_predictions)
             with engine.begin() as conn:
                 conn.execute(text(f"""
-                    INSERT INTO {TABLE_AI_PREDICTIONS} (game_id, game_date, predicted_winner, prediction_prob)
+                    INSERT INTO ai_predictions (game_id, game_date, predicted_winner, prediction_prob)
                     VALUES (:gid, :gdate, :winner, :prob)
                     ON CONFLICT (game_id) DO UPDATE SET
                         predicted_winner = EXCLUDED.predicted_winner,
@@ -107,7 +107,7 @@ class ModelPipeline:
         """DB에서 피처(match_features)와 정답 라벨(kbo_games의 경기 결과)을 조인하여 가져옵니다."""
         # 무승부는 모델 학습에 혼선을 주므로 제외합니다.
         query = text(f"""
-            SELECT 
+            SELECT
                 m.game_id, m.game_date,
                 m.home_team, m.away_team,
                 m.home_elo, m.away_elo,
@@ -118,13 +118,13 @@ class ModelPipeline:
                 m.home_matchup_rd, m.away_matchup_rd,
                 m.season_matchup_count,
                 m.rest_diff,
-                CASE 
+                CASE
                     WHEN g.winning_team = m.home_team THEN 1
                     WHEN g.winning_team = m.away_team THEN 0
                 END as home_team_win
-            FROM {TABLE_MATCH_FEATURES} m
-            JOIN {TABLE_KBO_GAMES} g ON m.game_id = g.game_id
-            WHERE g.winning_team IS NOT NULL 
+            FROM match_features m
+            JOIN kbo_games g ON m.game_id = g.game_id
+            WHERE g.winning_team IS NOT NULL
               AND g.winning_team != '무승부'
             ORDER BY m.game_date ASC, m.game_id ASC
         """)
@@ -142,22 +142,22 @@ class ModelPipeline:
         # 1. 데이터 로드 및 전처리
         raw_df = cls.load_data_from_db()
         
-        # 2. 학습 데이터 범위 설정 (검증셋 없이 전체 데이터 사용)
-        #    - 최초 모델: 2021년부터 작년(CURRENT_DATE.year - 1)까지 학습
-        #    - 오프시즌 재학습: 2021년부터 당해(CURRENT_DATE.year)까지 학습
+        # 2. 학습 데이터 범위 설정 (전체 데이터 사용, 검증셋 분리 없음)
+        #    - 모든 가용 데이터를 학습에 사용 (2021년 ~ 현재까지)
+        #    - 검증셋을 분리하지 않는 이유: 더 많은 데이터로 모델 성능 향상
+        #    - 필요 시 2020년 데이터를 검증셋으로 활용 가능
         current_year = CURRENT_DATE.year
         season_mode = get_season_mode()
         
         if season_mode == "offseason":
             # 오프시즌: 2021 ~ 당해 시즌 전체 데이터로 재학습
-            # (예: 2026년 오프시즌 → 2021~2026년 데이터)
             df_to_train = raw_df[raw_df['game_date'].dt.year <= current_year]
             print(f"🔄 오프시즌 재학습: 2021~{current_year}년 데이터 ({len(df_to_train)}건)")
         else:
-            # 시즌 중: 2021 ~ 작년 데이터로 학습 (당해 시즌 데이터는 미포함)
-            # (예: 2026년 시즌 중 → 2021~2025년 데이터)
-            df_to_train = raw_df[raw_df['game_date'].dt.year < current_year]
-            print(f"🔄 시즌 중 학습: 2021~{current_year-1}년 데이터 ({len(df_to_train)}건)")
+            # 시즌 중: 2021 ~ 현재까지 전체 데이터로 학습
+            # (당해 시즌 데이터도 포함하여 더 많은 학습 데이터 확보)
+            df_to_train = raw_df[raw_df['game_date'].dt.year <= current_year]
+            print(f"🔄 시즌 중 학습: 2021~{current_year}년 전체 데이터 ({len(df_to_train)}건)")
 
         if df_to_train.empty:
             raise ValueError("❌ 학습할 데이터가 없습니다. 최소 2021년 이후 데이터가 필요합니다.")
@@ -178,7 +178,17 @@ class ModelPipeline:
         
         model.fit(X_train, y_train)
 
-        # 4. 모델 저장
+        # 4. 모델 성능 메트릭 로깅 (학습 데이터 기준)
+        train_score = model.score(X_train, y_train)
+        print(f"📊 모델 학습 정확도: {train_score:.4f}")
+        
+        # 5. 피처 중요도 출력
+        feature_names = ModelPreprocessor.preprocess_data(df_to_train).columns.tolist()
+        importances = model.feature_importances_
+        for name, imp in sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True):
+            print(f"   📌 {name}: {imp:.1f}")
+
+        # 6. 모델 저장
         joblib.dump(model, MODEL_PATH)
         print(f"✅ 모델 저장 완료: {MODEL_PATH}")
 

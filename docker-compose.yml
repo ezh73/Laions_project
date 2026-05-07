@@ -6,17 +6,16 @@ services:
     container_name: laions_db
     restart: always
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:-laions_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-laions_password}
+      POSTGRES_DB: ${DB_NAME:-laions_db}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
     healthcheck:
-      # 주의! 여기에도 변수를 넣어주셔야 나중에 아이디나 DB명이 바뀌어도 에러가 안 납니다.
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-laions_user} -d ${DB_NAME:-laions_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -31,6 +30,8 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-laions_user}:${DB_PASSWORD:-laions_password}@db:5432/${DB_NAME:-laions_db}
     ports:
       - "8001:8000"
 
@@ -39,14 +40,12 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL}
-        - REACT_APP_FIREBASE_API_KEY=${REACT_APP_FIREBASE_API_KEY}
-        - REACT_APP_FIREBASE_AUTH_DOMAIN=${REACT_APP_FIREBASE_AUTH_DOMAIN}
-        - REACT_APP_FIREBASE_PROJECT_ID=${REACT_APP_FIREBASE_PROJECT_ID}
-        - REACT_APP_FIREBASE_STORAGE_BUCKET=${REACT_APP_FIREBASE_STORAGE_BUCKET}
-        - REACT_APP_FIREBASE_MESSAGING_SENDER_ID=${REACT_APP_FIREBASE_MESSAGING_SENDER_ID}
-        - REACT_APP_FIREBASE_APP_ID=${REACT_APP_FIREBASE_APP_ID}
+        - REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL:-http://localhost:8001}
+        - REACT_APP_SUPABASE_URL=${REACT_APP_SUPABASE_URL}
+        - REACT_APP_SUPABASE_ANON_KEY=${REACT_APP_SUPABASE_ANON_KEY}
     container_name: laions_frontend
+    depends_on:
+      - backend
     env_file:
       - .env
     ports:

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, date
 from sqlalchemy import text
 import re
 from bs4 import BeautifulSoup
-from config import engine, CURRENT_DATE, TEAMS, TABLE_KBO_GAMES, TABLE_KBO_SCHEDULE
+from config import engine, CURRENT_DATE, TEAMS
 from auth_utils import verify_admin_api_key
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -125,7 +125,7 @@ class CrawlerService:
                     if parsed:
                         with engine.begin() as conn:
                             insert_query = text(f"""
-                                INSERT INTO {TABLE_KBO_GAMES} (game_id, game_date, home_team, away_team, home_score, away_score, winning_team, is_postseason)
+                                INSERT INTO kbo_games (game_id, game_date, home_team, away_team, home_score, away_score, winning_team, is_postseason)
                                 VALUES (:game_id, :game_date, :home_team, :away_team, :home_score, :away_score, :winning_team, :is_postseason)
                                 ON CONFLICT (game_id) DO NOTHING
                             """)
@@ -154,7 +154,7 @@ class CrawlerService:
             if game and game['game_date'] == yesterday and game['winning_team']:
                 with engine.begin() as conn:
                     conn.execute(text(f"""
-                        INSERT INTO {TABLE_KBO_GAMES} (game_id, game_date, home_team, away_team, home_score, away_score, winning_team, is_postseason)
+                        INSERT INTO kbo_games (game_id, game_date, home_team, away_team, home_score, away_score, winning_team, is_postseason)
                         VALUES (:game_id, :game_date, :home_team, :away_team, :home_score, :away_score, :winning_team, :is_postseason)
                         ON CONFLICT (game_id) DO UPDATE SET
                             home_score = EXCLUDED.home_score,
@@ -173,7 +173,7 @@ class CrawlerService:
             if game and game['game_date'] >= today:
                 with engine.begin() as conn:
                     conn.execute(text(f"""
-                        INSERT INTO {TABLE_KBO_SCHEDULE} (game_id, game_date, home_team, away_team, game_status, is_postseason)
+                        INSERT INTO kbo_schedule (game_id, game_date, home_team, away_team, game_status, is_postseason)
                         VALUES (:game_id, :game_date, :home_team, :away_team, '예정', :is_postseason)
                         ON CONFLICT (game_id) DO NOTHING
                     """), game)

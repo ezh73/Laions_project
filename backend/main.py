@@ -2,9 +2,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-import firebase_admin
-from firebase_admin import credentials, firestore
-import random
 
 from config import ADMIN_MODE, CURRENT_DATE, SEASON_MODE, engine
 from services import (
@@ -16,6 +13,7 @@ from services import (
     performance_service,
     admin_service
 )
+from supabase_config import upsert_user_score
 
 app = FastAPI(title="Laions V2 API", version="2.0.0")
 
@@ -27,10 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. Firebase 초기화 (Firestore 클라이언트 전역 공유)
-# (참고: firebase_config.py에서 초기화 관리)
-
-# 3. 서비스 라우터 등록
+# 2. 서비스 라우터 등록
 app.include_router(crawler_service.router)
 app.include_router(feature_service.router)
 app.include_router(model_service.router)
@@ -39,7 +34,7 @@ app.include_router(ranking_service.router)
 app.include_router(performance_service.router)
 app.include_router(admin_service.router)
 
-# 4. 시스템 상태 체크 API
+# 3. 시스템 상태 체크 API
 @app.get("/api/health")
 def health_check():
     return {
@@ -47,10 +42,10 @@ def health_check():
         "admin_mode": ADMIN_MODE,
         "current_date": str(CURRENT_DATE),
         "season_mode": SEASON_MODE,
-        "db_connected": True  # SQLAlchemy 엔진 연결 확인 로직 추가 가능
+        "db_connected": True
     }
 
-# 5. 퀴즈 API (quizmaker.py로 미리 생성된 퀴즈를 DB에서 조회)
+# 4. 퀴즈 API (quizmaker.py로 미리 생성된 퀴즈를 DB에서 조회)
 @app.get("/api/quiz")
 def get_quiz(difficulty: str = None):
     """DB에서 랜덤으로 퀴즈 1개를 반환합니다. (difficulty: easy / medium / hard, 생략 시 전체)"""
@@ -129,16 +124,15 @@ def submit_quiz(user_id: str, quiz_id: int, answer: str, display_name: str = Non
                 }
             )
             
-            # Firestore에 점수 반영
+            # Supabase에 점수 반영 (Firestore 대체)
             if is_correct and earned_points > 0:
-                from firebase_config import db_fs
-                from firebase_admin import firestore
-                users_ref = db_fs.collection("users_admin" if ADMIN_MODE else "users")
-                user_doc = users_ref.document(user_id)
-                user_doc.update({
-                    "total_score": firestore.Increment(earned_points),
-                    "weekly_score": firestore.Increment(earned_points)
-                })
+                nickname = display_name or user_id[:8]
+                upsert_user_score(
+                    user_id=user_id,
+                    nickname=nickname,
+                    score_earned=earned_points,
+                    score_type="quiz_score"
+                )
             
             return {
                 "status": "ok",
@@ -154,7 +148,7 @@ def submit_quiz(user_id: str, quiz_id: int, answer: str, display_name: str = Non
         raise HTTPException(status_code=500, detail=f"정답 제출 실패: {str(e)}")
 
 
-# 6. 사용자 예측 제출 API (user_predictions 테이블)
+# 5. 사용자 예측 제출 API (user_predictions 테이블)
 @app.get("/api/predict/today")
 def get_today_predictions():
     """오늘 날짜의 AI 예측 결과를 반환합니다. (model_service.py의 /api/model/all 사용)"""
@@ -194,14 +188,13 @@ def submit_user_prediction(user_id: str, game_id: str, predicted_winner: str):
         raise HTTPException(status_code=500, detail=f"예측 저장 실패: {str(e)}")
 
 
-# 7. 시뮬레이션 리포트 API (관리자 모드)
+# 6. 시뮬레이션 리포트 API
 @app.get("/api/performance/simulation-report")
 def get_simulation_report():
-    """관리자 모드에서 시뮬레이션 상세 리포트를 반환합니다."""
+    """시뮬레이션 상세 리포트를 반환합니다."""
     try:
         from services.simulation_service import SimulationService
         projection = SimulationService.get_season_projection()
-        # projection이 리스트인 경우 (SimulationService.get_season_projection() 반환값)
         if isinstance(projection, list):
             return {
                 "status": "ok",
@@ -212,7 +205,6 @@ def get_simulation_report():
                     "current_date": str(CURRENT_DATE)
                 }
             }
-        # projection이 딕셔너리인 경우 (하위 호환)
         return {
             "status": "ok",
             "report": {
@@ -226,15 +218,14 @@ def get_simulation_report():
         raise HTTPException(status_code=500, detail=f"시뮬레이션 리포트 생성 실패: {str(e)}")
 
 
-# 8. 리그 순위 API (team_rank 테이블)
+# 7. 리그 순위 API (team_rank 테이블)
 @app.get("/api/standings")
 def get_standings():
     """KBO 리그 순위를 조회합니다. (team_rank 테이블)"""
     try:
-        table_name = "team_rank_admin" if ADMIN_MODE else "team_rank"
         with engine.connect() as conn:
             rows = conn.execute(
-                text(f"SELECT team_name, rank, games, wins, losses, draws, win_rate, game_gap, last10, streak FROM {table_name} ORDER BY rank ASC")
+                text(f"SELECT team_name, rank, games, wins, losses, draws, win_rate, game_gap, last10, streak FROM team_rank ORDER BY rank ASC")
             ).fetchall()
             standings = [
                 {

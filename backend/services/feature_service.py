@@ -12,7 +12,7 @@ import psycopg2.extras
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-from config import engine, TEAMS, CURRENT_DATE, TABLE_MATCH_FEATURES, TABLE_KBO_GAMES
+from config import engine, TEAMS, CURRENT_DATE
 from auth_utils import verify_admin_api_key
 
 router = APIRouter(prefix="/api/features", tags=["features"])
@@ -39,11 +39,11 @@ class FeatureService:
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cursor:
-                cursor.execute(f"ALTER TABLE {TABLE_MATCH_FEATURES} ADD COLUMN IF NOT EXISTS home_recent_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE {TABLE_MATCH_FEATURES} ADD COLUMN IF NOT EXISTS away_recent_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE {TABLE_MATCH_FEATURES} ADD COLUMN IF NOT EXISTS home_matchup_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE {TABLE_MATCH_FEATURES} ADD COLUMN IF NOT EXISTS away_matchup_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE {TABLE_MATCH_FEATURES} ADD COLUMN IF NOT EXISTS season_matchup_count INTEGER;")
+                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS home_recent_rd FLOAT;")
+                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS away_recent_rd FLOAT;")
+                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS home_matchup_rd FLOAT;")
+                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS away_matchup_rd FLOAT;")
+                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS season_matchup_count INTEGER;")
                 conn.commit()
         finally:
             conn.close()
@@ -55,7 +55,7 @@ class FeatureService:
         # 1. 데이터 로드: 날짜순으로 정렬하여 과거부터 현재까지 시뮬레이션
         query = text(f"""
             SELECT game_id, game_date, home_team, away_team, home_score, away_score, winning_team
-            FROM {TABLE_KBO_GAMES}
+            FROM kbo_games
             ORDER BY game_date ASC, game_id ASC
         """)
         with engine.connect() as conn:
@@ -173,14 +173,14 @@ class FeatureService:
 
         # 4. DB 저장 (DELETE FROM 사용: CASCADE 없이 안전하게 전체 삭제 후 재삽입)
         columns = list(final_features[0].keys())
-        query = f"INSERT INTO {TABLE_MATCH_FEATURES} ({', '.join(columns)}) VALUES %s"
+        query = f"INSERT INTO match_features ({', '.join(columns)}) VALUES %s"
         values = [tuple(row[col] for col in columns) for row in final_features]
 
         conn = engine.raw_connection()
         try:
             with conn.cursor() as cursor:
                 # TRUNCATE CASCADE 대신 DELETE 사용 (외래키 CASCADE 삭제 방지)
-                cursor.execute(f"DELETE FROM {TABLE_MATCH_FEATURES}")
+                cursor.execute(f"DELETE FROM match_features")
                 psycopg2.extras.execute_values(cursor, query, values)
                 conn.commit()
         finally:

@@ -13,6 +13,7 @@ import SeasonProjectionCard from '../components/SeasonProjectionCard';
 import AiPerformanceCard from '../components/AiPerformanceCard';
 import PostseasonCard from '../components/PostseasonCard';
 import LeagueStandingsCard from '../components/LeagueStandingsCard';
+import HistoryCard from '../components/HistoryCard';
 
 export default function Dashboard({ user }) {
     const { seasonMode, isAdminMode, loading: modeLoading, error: modeError } = useSystemMode();
@@ -84,6 +85,7 @@ export default function Dashboard({ user }) {
                 <AiPerformanceCard isAdminMode={isAdminMode} seasonMode={seasonMode} />
                 <RankingCard />
                 <LeagueStandingsCard />
+                <HistoryCard />
             </Box>
         </Box>
     );

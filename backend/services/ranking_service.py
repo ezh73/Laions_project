@@ -1,14 +1,15 @@
 # backend/services/ranking_service.py
-from fastapi import APIRouter, HTTPException, Depends
+"""
+랭킹 서비스 - Supabase 기반으로 리팩토링
+Firebase Firestore 의존성을 제거하고 Supabase(PostgreSQL)로 통합합니다.
+"""
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 from datetime import datetime, timedelta
 import logging
 
-# Firestore 및 설정 로드
-from firebase_config import db_fs
-from firebase_admin import firestore
-from config import engine, CURRENT_DATE, ADMIN_MODE, TABLE_KBO_GAMES, TABLE_AI_PREDICTIONS
-from auth_utils import verify_admin_api_key
+from config import engine, CURRENT_DATE
+from supabase_config import upsert_user_score, get_user_rankings, reset_weekly_scores
 
 router = APIRouter(prefix="/api/ranking", tags=["ranking"])
 logger = logging.getLogger(__name__)
@@ -24,17 +25,14 @@ SCORE_POLICY = {
     }
 }
 
-def _get_users_collection():
-    """관리자 모드에 따라 적절한 Firestore 컬렉션명을 반환합니다. (동적 평가)"""
-    from config import ADMIN_MODE
-    return "users_admin" if ADMIN_MODE else "users"
 
 class RankingService:
     @staticmethod
     def settle_daily_points(target_date):
-        """AI 예측 결과와 비교하여 유저 점수를 정산합니다."""
-        if not db_fs: return {"status": "error", "message": "Firestore 연결 없음"}
-
+        """
+        AI 예측 결과와 비교하여 유저 점수를 정산합니다.
+        Firestore 대신 Supabase user_profiles 테이블에 점수를 기록합니다.
+        """
         with engine.connect() as conn:
             # 1. 경기 결과 + AI 예측 결과 한 번에 가져오기 (JOIN 사용)
             query = text(f"""
@@ -42,8 +40,8 @@ class RankingService:
                     g.game_id,
                     g.winning_team,
                     a.predicted_winner as ai_pick
-                FROM {TABLE_KBO_GAMES} g
-                LEFT JOIN {TABLE_AI_PREDICTIONS} a ON g.game_id = a.game_id
+                FROM kbo_games g
+                LEFT JOIN ai_predictions a ON g.game_id = a.game_id
                 WHERE g.game_date = :target_date
                   AND g.winning_team IS NOT NULL
                   AND g.winning_team != '무승부'
@@ -73,7 +71,8 @@ class RankingService:
             user_points = {}
             for row in user_preds:
                 truth = truth_table.get(row.game_id)
-                if not truth: continue
+                if not truth:
+                    continue
 
                 # 유저가 맞췄을 경우
                 if row.predicted_winner == truth["winner"]:
@@ -84,50 +83,49 @@ class RankingService:
                     
                     user_points[row.user_id] = user_points.get(row.user_id, 0) + points
 
-            # 4. Firestore 일괄 업데이트
+            # 4. Supabase에 점수 반영 (Firestore 대체)
             if user_points:
-                cls._update_firestore_scores(user_points, "prediction")
+                for uid, points in user_points.items():
+                    # user_rankings 테이블에서 닉네임 조회
+                    nickname = conn.execute(
+                        text("SELECT nickname FROM user_rankings WHERE user_id = :uid"),
+                        {"uid": uid}
+                    ).scalar() or uid[:8]
+                    
+                    upsert_user_score(
+                        user_id=uid,
+                        nickname=nickname,
+                        score_earned=points,
+                        score_type="prediction_score"
+                    )
 
             return {"status": "ok", "updated_users": len(user_points)}
 
     @staticmethod
-    def add_quiz_score(user_id: str, difficulty: str):
-        """난이도별 퀴즈 점수를 합산합니다."""
+    def add_quiz_score(user_id: str, difficulty: str, nickname: str = "익명"):
+        """난이도별 퀴즈 점수를 Supabase에 합산합니다."""
         points = SCORE_POLICY["QUIZ"].get(difficulty.lower(), 0)
         if points == 0:
             raise HTTPException(status_code=400, detail="잘못된 난이도 설정")
 
-        # 🚀 공정성을 위해 유저당 하루 퀴즈 횟수 제한 로직을 여기에 추가할 수 있습니다.
+        success = upsert_user_score(
+            user_id=user_id,
+            nickname=nickname,
+            score_earned=points,
+            score_type="quiz_score"
+        )
         
-        RankingService._update_firestore_scores({user_id: points}, "quiz")
+        if not success:
+            raise HTTPException(status_code=500, detail="점수 저장에 실패했습니다.")
+        
         return {"status": "ok", "earned_points": points}
-
-    @classmethod
-    def _update_firestore_scores(cls, user_points_map, source_type):
-        """Firestore에 주간 및 누적 점수를 반영합니다."""
-        collection_name = _get_users_collection()
-        batch = db_fs.batch()
-        for uid, points in user_points_map.items():
-            user_ref = db_fs.collection(collection_name).document(uid)
-            batch.set(user_ref, {
-                "total_score": firestore.Increment(points),
-                "weekly_score": firestore.Increment(points),
-                f"{source_type}_score": firestore.Increment(points), # 점수 출처 기록
-                "updated_at": datetime.utcnow()
-            }, merge=True)
-        batch.commit()
 
     @staticmethod
     def reset_weekly_ranking():
         """주간 랭킹 초기화 (매주 월요일 0시 호출용)"""
-        collection_name = _get_users_collection()
-        users_ref = db_fs.collection(collection_name)
-        docs = users_ref.where("weekly_score", ">", 0).stream()
-        
-        batch = db_fs.batch()
-        for doc in docs:
-            batch.update(doc.reference, {"weekly_score": 0})
-        batch.commit()
+        success = reset_weekly_scores()
+        if not success:
+            raise HTTPException(status_code=500, detail="주간 점수 초기화 실패")
         return {"status": "reset_done"}
 
 
@@ -137,21 +135,9 @@ class RankingService:
 
 @router.get("/top")
 def get_top_ranking(limit: int = 10):
-    """Firestore에서 전체 랭킹 상위 N명을 조회합니다."""
+    """Supabase에서 전체 랭킹 상위 N명을 조회합니다."""
     try:
-        users_ref = db_fs.collection(COLLECTION_USERS)
-        docs = users_ref.order_by("total_score", direction=firestore.Query.DESCENDING).limit(limit).stream()
-        rankings = []
-        for doc in docs:
-            data = doc.to_dict()
-            rankings.append({
-                "user_id": doc.id,
-                "nickname": data.get("nickname", "익명"),
-                "total_score": data.get("total_score", 0),
-                "weekly_score": data.get("weekly_score", 0),
-                "prediction_score": data.get("prediction_score", 0),
-                "quiz_score": data.get("quiz_score", 0)
-            })
+        rankings = get_user_rankings(limit=limit, order_by="total_score")
         return {"status": "ok", "rankings": rankings}
     except Exception as e:
         logger.error(f"랭킹 조회 실패: {e}")
@@ -160,19 +146,9 @@ def get_top_ranking(limit: int = 10):
 
 @router.get("/weekly")
 def get_weekly_ranking(limit: int = 10):
-    """Firestore에서 주간 랭킹 상위 N명을 조회합니다."""
+    """Supabase에서 주간 랭킹 상위 N명을 조회합니다."""
     try:
-        users_ref = db_fs.collection(COLLECTION_USERS)
-        docs = users_ref.order_by("weekly_score", direction=firestore.Query.DESCENDING).limit(limit).stream()
-        rankings = []
-        for doc in docs:
-            data = doc.to_dict()
-            rankings.append({
-                "user_id": doc.id,
-                "nickname": data.get("nickname", "익명"),
-                "total_score": data.get("total_score", 0),
-                "weekly_score": data.get("weekly_score", 0)
-            })
+        rankings = get_user_rankings(limit=limit, order_by="weekly_score")
         return {"status": "ok", "rankings": rankings}
     except Exception as e:
         logger.error(f"주간 랭킹 조회 실패: {e}")
