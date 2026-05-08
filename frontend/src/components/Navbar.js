@@ -13,7 +13,7 @@ export default function Navbar({ user }) {
         {user && (
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Typography sx={{ mx: 2 }}>
-              {user.displayName}님
+              {(user.displayName || user.user_metadata?.full_name || user.user_metadata?.name || user.email || '사용자')}님
             </Typography>
             <Button color="inherit" variant="outlined" onClick={logout}>로그아웃</Button>
           </Box>

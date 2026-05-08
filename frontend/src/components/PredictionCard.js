@@ -29,7 +29,8 @@ export default function PredictionCard({ user, prediction, isPostseason = false 
 
   const handleUserPredict = async (gameId, predictedWinner) => {
     try {
-      const response = await submitUserPrediction(user.uid, gameId, predictedWinner);
+      const userId = user.id || user.user?.id || user.uid;
+      const response = await submitUserPrediction(userId, gameId, predictedWinner);
       setMessages(prev => ({
         ...prev,
         [gameId]: { type: 'success', text: response.data.message || '예측이 저장되었습니다.' }

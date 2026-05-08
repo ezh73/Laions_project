@@ -10,7 +10,9 @@ import google.generativeai as genai
 from datetime import datetime
 
 # --- 1. 환경 설정 ---
-load_dotenv(dotenv_path=".env")
+# 프로젝트 루트의 .env 파일을 참조 (backend/stack_service/ → ../../ → 프로젝트 루트)
+_env_path = os.path.join(os.path.dirname(__file__), "../../.env")
+load_dotenv(dotenv_path=_env_path)
 DATABASE_URL = os.getenv("DATABASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -129,14 +131,13 @@ def main():
         }
 
         try:
-            with engine.connect() as conn:
+            with engine.begin() as conn:
                 stmt = text("""
                     INSERT INTO samfan_quizzes
                     (question, options, correct_answer, difficulty, explanation, internal_verification, reference_link)
                     VALUES (:question, :options, :correct_answer, :difficulty, :explanation, :internal_verification, :reference_link)
                 """)
                 conn.execute(stmt, quiz_data)
-                conn.commit()
             success_count += 1
             print(f"   ✅ [{difficulty}] {question}")
         except Exception as e:
@@ -146,7 +147,7 @@ def main():
 
 if __name__ == "__main__":
     # 테이블 생성 스키마 업데이트
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS samfan_quizzes (
                 id SERIAL PRIMARY KEY,
@@ -160,5 +161,4 @@ if __name__ == "__main__":
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """))
-        conn.commit()
     main()

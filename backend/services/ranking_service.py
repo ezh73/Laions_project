@@ -61,6 +61,8 @@ class RankingService:
 
             # 2. 유저들의 모든 예측 데이터 가져오기
             game_ids = tuple(truth_table.keys())
+            if not game_ids:
+                return {"status": "skipped", "message": "정산할 game_ids가 없습니다."}
             user_preds = conn.execute(text("""
                 SELECT user_id, game_id, predicted_winner
                 FROM user_predictions
@@ -86,9 +88,9 @@ class RankingService:
             # 4. Supabase에 점수 반영 (Firestore 대체)
             if user_points:
                 for uid, points in user_points.items():
-                    # user_rankings 테이블에서 닉네임 조회
+                    # user_profiles 테이블에서 닉네임 조회
                     nickname = conn.execute(
-                        text("SELECT nickname FROM user_rankings WHERE user_id = :uid"),
+                        text("SELECT nickname FROM user_profiles WHERE user_id = :uid"),
                         {"uid": uid}
                     ).scalar() or uid[:8]
                     
@@ -135,21 +137,10 @@ class RankingService:
 
 @router.get("/top")
 def get_top_ranking(limit: int = 10):
-    """Supabase에서 전체 랭킹 상위 N명을 조회합니다."""
-    try:
-        rankings = get_user_rankings(limit=limit, order_by="total_score")
-        return {"status": "ok", "rankings": rankings}
-    except Exception as e:
-        logger.error(f"랭킹 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"랭킹 조회 실패: {str(e)}")
-
-
-@router.get("/weekly")
-def get_weekly_ranking(limit: int = 10):
-    """Supabase에서 주간 랭킹 상위 N명을 조회합니다."""
+    """Supabase에서 주간 랭킹 상위 N명을 조회합니다. (weekly_score 기준)"""
     try:
         rankings = get_user_rankings(limit=limit, order_by="weekly_score")
         return {"status": "ok", "rankings": rankings}
     except Exception as e:
-        logger.error(f"주간 랭킹 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"주간 랭킹 조회 실패: {str(e)}")
+        logger.error(f"랭킹 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"랭킹 조회 실패: {str(e)}")

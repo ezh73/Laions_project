@@ -77,9 +77,6 @@ Laions는 이러한 문제를 해결하기 위해, AI를 단순한 예측 도구
     # --- Google Gemini API 키 ---
     GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
 
-    # --- 관리자 API 인증을 위한 비밀 키 ---
-    ADMIN_API_KEY="YOUR_SECRET_ADMIN_KEY"
-
     # --- (선택) 관리자 모드 시뮬레이션 설정 ---
     ADMIN_MODE=true
     ADMIN_DATE=2025-10-29

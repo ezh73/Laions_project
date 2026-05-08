@@ -1,0 +1,73 @@
+# .github/workflows/daily_pipeline.yml
+# 매일 새벽 1시(KST)에 실행되는 일일 파이프라인
+# 실행 순서: 스크래핑 → 피처 재구축 → AI 예측 → 점수 정산 → (월요일) 주간 랭킹 초기화
+# (월요일) 주간 퀴즈 생성 추가
+
+name: Daily Pipeline
+
+on:
+  schedule:
+    # KST 01:00 = UTC 16:00 (전날)
+    - cron: '0 16 * * *'
+  workflow_dispatch:  # 수동 실행도 가능
+
+jobs:
+  daily-pipeline:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run daily pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ADMIN_MODE: "false"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          cd backend
+          python daily_pipeline.py
+
+      - name: Run weekly quiz generation (Monday only)
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          cd backend
+          python -c "
+from datetime import datetime
+# KST 기준 현재 요일 확인 (UTC+9)
+from datetime import timezone, timedelta
+kst_now = datetime.now(timezone(timedelta(hours=9)))
+if kst_now.weekday() != 0:  # 0 = Monday
+    print('⏭️ 오늘은 월요일이 아닙니다. 주간 퀴즈 생성을 건너뜁니다.')
+    exit(0)
+
+from services.weekly_quizmaker import WeeklyQuizMaker
+import sys
+
+maker = WeeklyQuizMaker()
+result = maker.run()
+if result:
+    print(f'✅ 주간 퀴즈 생성 완료: {result}개 저장됨')
+    sys.exit(0)
+else:
+    print('❌ 주간 퀴즈 생성 실패')
+    sys.exit(1)
+"

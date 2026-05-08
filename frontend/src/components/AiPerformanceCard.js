@@ -2,9 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 import { Card, CardContent, Typography, Box, CircularProgress, Alert } from "@mui/material";
-import { getAiPerformance, getSimulationReport } from "../api/performanceApi";
+import { getAiPerformance } from "../api/performanceApi";
 
-const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
+const AiPerformanceCard = ({ seasonMode }) => {
     const [performance, setPerformance] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -14,18 +14,9 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
             setLoading(true);
             setError(null);
             try {
-                let response;
-                if (seasonMode === 'offseason') {
-                    response = await getAiPerformance();
-                } else {
-                    response = isAdminMode
-                        ? await getSimulationReport()
-                        : await getAiPerformance();
-                }
-                // API 응답 구조 통일: response.data 아래에 실제 데이터
-                // getAiPerformance: {status: "ok", data: {accuracy, total_games, correct_predictions, recent_results}}
-                // getSimulationReport: {status: "ok", report: {projections, summary, admin_mode, current_date}}
-                const data = response.data?.data || response.data?.report || response.data;
+                const response = await getAiPerformance();
+                // API 응답 구조: response.data = {status: "ok", data: {accuracy, total_games, correct_predictions, recent_results}}
+                const data = response.data?.data || response.data;
                 setPerformance(data);
 
             } catch (err) {
@@ -39,7 +30,7 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
         if (seasonMode) {
           fetchPerformance();
         }
-    }, [isAdminMode, seasonMode]);
+    }, [seasonMode]);
 
     if (loading) {
         return (
@@ -70,44 +61,28 @@ const AiPerformanceCard = ({ isAdminMode, seasonMode }) => {
                     🤖 AI 예측 정확도
                 </Typography>
                 
-                {isAdminMode && seasonMode !== 'offseason' ? (
-                    // 시뮬레이션 리포트 모드 (관리자)
-                    <Box textAlign="center" p={2}>
-                        <Typography variant="body1" color="text.secondary">
-                            모드: <strong>시뮬레이션 리포트</strong>
-                        </Typography>
-                        <Typography variant="body1" color="text.secondary">
-                            {performance.summary || "시뮬레이션 완료"}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                            ({performance.current_date || ""} 기준)
-                        </Typography>
-                    </Box>
-                ) : (
-                    // 일반 AI 성능 모드
-                    <Box textAlign="center" p={2}>
-                        {performance.total_games === 0 ? (
-                            <>
-                                <Typography variant="body1" color="text.secondary">
-                                  <strong>아직 누적된 경기 기록이 없습니다.</strong>
-                                </Typography>
-                                <Typography variant="body1" color="text.secondary">
-                                  모델 기본 정확도: <strong>61.97%</strong>
-                                </Typography>
-                            </>
-                        ) : (
-                            <>
-                                <Typography variant="body1" color="text.secondary">
-                                  누적 정확도 ({performance.total_games}경기):{" "}
-                                  <strong>{performance.accuracy?.toFixed(1)}%</strong>
-                                </Typography>
-                                <Typography variant="body1" color="text.secondary">
-                                  ({performance.correct_predictions}적중 / {performance.total_games}경기)
-                                </Typography>
-                            </>
-                        )}
-                    </Box>
-                )}
+                <Box textAlign="center" p={2}>
+                    {performance.total_games === 0 ? (
+                        <>
+                            <Typography variant="body1" color="text.secondary">
+                              <strong>아직 누적된 경기 기록이 없습니다.</strong>
+                            </Typography>
+                            <Typography variant="body1" color="text.secondary">
+                              모델 기본 정확도: <strong>61.97%</strong>
+                            </Typography>
+                        </>
+                    ) : (
+                        <>
+                            <Typography variant="body1" color="text.secondary">
+                              누적 정확도 ({performance.total_games}경기):{" "}
+                              <strong>{performance.accuracy?.toFixed(1)}%</strong>
+                            </Typography>
+                            <Typography variant="body1" color="text.secondary">
+                              ({performance.correct_predictions}적중 / {performance.total_games}경기)
+                            </Typography>
+                        </>
+                    )}
+                </Box>
             </CardContent>
         </Card>
     );

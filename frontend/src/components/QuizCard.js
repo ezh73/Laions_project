@@ -49,8 +49,8 @@ export default function QuizCard({ user }) {
   };
 
   const handleSubmit = async () => {
-    const userId = user.uid;
-    const displayName = user.displayName;
+    const userId = user.id || user.user?.id || user.uid;
+    const displayName = user.displayName || user.user?.user_metadata?.full_name;
     if (!selectedAnswer) {
       setResult({ message: '답을 선택해주세요.', correct: false });
       return;

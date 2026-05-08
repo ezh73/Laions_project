@@ -6,7 +6,8 @@ requests
 pandas
 psycopg2-binary
 joblib
-scikit-learn
 lightgbm
+scikit-learn
 beautifulsoup4
 supabase
+google-generativeai

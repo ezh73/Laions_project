@@ -1,25 +1,52 @@
 # backend/services/admin_service.py
 """
-관리자 모드 서비스 - 트랜잭션 롤백 방식으로 리팩토링
+관리자 모드 서비스 - 트랜잭션 롤백 방식
 
 변경 사항:
 1. ADMIN_MODE는 단순히 날짜를 강제 주입하는 역할만 수행
 2. 모든 데이터는 단일 테이블(kbo_games 등)에 저장
-3. 관리자 모드 종료 시 트랜잭션 롤백으로 DB 오염 방지
-4. config 모듈의 전역 변수를 직접 변경하지 않음
+3. 관리자 모드 파이프라인은 하나의 트랜잭션으로 모든 작업을 수행 후 ROLLBACK
+4. 내부 서비스 함수들에 동일한 connection 객체를 주입하여 모두 같은 트랜잭션 내에서 실행
+
+수정 내용 (2026-05-08):
+- 기존 SAVEPOINT 방식은 engine.begin()이 종료 시 COMMIT하여 롤백이 무효화됨
+- 내부 서비스 함수들이 각자 별도 engine.begin()으로 트랜잭션을 열어 SAVEPOINT 범위 밖에서 동작
+- 해결: engine.connect() + 수동 BEGIN/ROLLBACK 사용, 모든 함수에 conn 주입
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 from datetime import datetime
+import pandas as pd
 
-from auth_utils import verify_admin_api_key
-from config import engine, CURRENT_DATE
+from config import engine, CURRENT_DATE, TEAMS, FEATURE_CONFIG
 import config as config_module
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 class AdminService:
+    @staticmethod
+    def _apply_admin_date(target_date: str):
+        """config 모듈에 관리자 날짜를 적용하고 이전 상태를 반환합니다."""
+        previous = {
+            "ADMIN_DATE_STR": getattr(config_module, "ADMIN_DATE_STR", None),
+            "CURRENT_DATE": getattr(config_module, "CURRENT_DATE", None),
+            "ADMIN_MODE": getattr(config_module, "ADMIN_MODE", False),
+        }
+        parsed_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        config_module.ADMIN_DATE_STR = target_date
+        config_module.CURRENT_DATE = parsed_date
+        if not config_module.ADMIN_MODE:
+            config_module.ADMIN_MODE = True
+        return previous
+
+    @staticmethod
+    def _restore_admin_date(previous: dict):
+        """config 모듈의 관리자 날짜를 이전 상태로 복원합니다."""
+        config_module.ADMIN_DATE_STR = previous["ADMIN_DATE_STR"]
+        config_module.CURRENT_DATE = previous["CURRENT_DATE"]
+        config_module.ADMIN_MODE = previous["ADMIN_MODE"]
+
     @staticmethod
     def get_current_date():
         """현재 설정된 관리자 날짜를 반환합니다."""
@@ -33,7 +60,6 @@ class AdminService:
         변경 사항:
         - ADMIN_MODE가 활성화되면 config의 날짜만 변경
         - DB 테이블 분리 없이 단일 테이블 사용
-        - 트랜잭션 격리를 위해 SAVEPOINT 활용 (읽기 전용 트랜잭션)
         """
         try:
             # 날짜 형식 검증
@@ -57,7 +83,7 @@ class AdminService:
             }
         except ValueError:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"잘못된 날짜 형식: {new_date}. YYYY-MM-DD 형식이어야 합니다."
             )
 
@@ -65,65 +91,75 @@ class AdminService:
     def run_admin_pipeline(target_date: str):
         """
         관리자 모드 파이프라인을 실행합니다.
-        트랜잭션 격리(SAVEPOINT)를 사용하여 실제 DB 변경 없이 테스트합니다.
-        
-        실행 순서:
-        1. 날짜 설정
-        2. 스크래핑 (읽기 전용)
-        3. 피처 재구축 (읽기 전용)
-        4. AI 예측 (읽기 전용)
-        5. 시즌 모드 판별
-        6. 롤백 (DB 변경 없음)
+        하나의 트랜잭션으로 모든 작업을 수행한 후 ROLLBACK하여 DB 변경을 취소합니다.
         """
+        previous_config = None
         try:
-            # 1. 날짜 설정
+            # 1. 날짜 설정 및 이전 상태 저장
             parsed_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+            previous_config = AdminService._apply_admin_date(target_date)
             
-            # 2. SAVEPOINT 생성 (트랜잭션 격리)
-            with engine.begin() as conn:
-                conn.execute(text("SAVEPOINT admin_test"))
-                
+            # 2. 시즌 모드 판별
+            season_mode = config_module.get_season_mode()
+            
+            # 3. 하나의 트랜잭션으로 모든 작업 수행
+            from services.crawler_service import CrawlerService
+            from services.feature_service import FeatureService
+            from services.model_service import ModelService
+            from daily_pipeline import update_team_rankings
+            
+            with engine.connect() as conn:
+                trans = conn.begin()  # 수동 트랜잭션 시작
                 try:
-                    # 3. 시즌 모드 판별 (config 재계산)
-                    config_module.ADMIN_DATE_STR = target_date
-                    config_module.CURRENT_DATE = parsed_date
-                    if not config_module.ADMIN_MODE:
-                        config_module.ADMIN_MODE = True
+                    print(f"🔁 [Admin] 트랜잭션 시작 (target_date: {target_date})")
                     
-                    season_mode = config_module.get_season_mode()
+                    # 3a. 경기 데이터 스크래핑 (conn 주입)
+                    print(f"\n[1/5] 📡 경기 데이터 스크래핑...")
+                    scrape_result = CrawlerService.update_daily_pipeline(conn=conn)
+                    print(f"   ✅ 스크래핑 완료: {scrape_result}")
                     
-                    # 4. 파이프라인 실행 (읽기 전용)
-                    from services.crawler_service import CrawlerService
-                    from services.feature_service import FeatureService
-                    from services.model_service import ModelService
+                    # 3b. 피처 재구축 (conn 주입)
+                    print(f"\n[2/5] 🔧 피처 재구축...")
+                    feature_count = FeatureService.build_all_features(conn=conn)
+                    print(f"   ✅ 피처 재구축 완료: {feature_count}개 경기")
                     
-                    # 스크래핑 (일정만 조회)
-                    schedule_result = CrawlerService.update_daily_pipeline()
+                    # 3c. AI 예측 (conn 주입)
+                    print(f"\n[3/5] 🤖 AI 예측 실행...")
+                    predictions = ModelService.predict_all_games(conn=conn)
+                    print(f"   ✅ AI 예측 완료: {len(predictions)}개 경기")
                     
-                    # 피처 재구축
-                    feature_count = FeatureService.build_all_features()
+                    # 3d. 리그 순위 업데이트 (conn 주입)
+                    print(f"\n[4/5] 📊 리그 순위 업데이트...")
+                    team_count = update_team_rankings(conn=conn)
+                    print(f"   ✅ 리그 순위 업데이트 완료: {team_count}개 팀")
                     
-                    # AI 예측
-                    predictions = ModelService.predict_all_games()
+                    # 3e. 모든 작업 완료 후 ROLLBACK
+                    print(f"\n[5/5] ↩️ 트랜잭션 롤백...")
+                    trans.rollback()
+                    print(f"   ✅ 롤백 완료: 모든 DB 변경사항이 취소되었습니다.")
                     
-                    # 5. ROLLBACK to SAVEPOINT (DB 변경 없음)
-                    conn.execute(text("ROLLBACK TO SAVEPOINT admin_test"))
-                    
-                    return {
+                    result = {
                         "status": "ok",
-                        "message": f"관리자 모드 파이프라인 실행 완료 (DB 변경 없음, 롤백됨)",
+                        "message": f"관리자 모드 파이프라인 실행 완료 (트랜잭션 롤백 적용)",
                         "target_date": target_date,
                         "season_mode": season_mode,
-                        "schedule_result": schedule_result,
+                        "scrape_result": scrape_result,
                         "feature_count": feature_count,
                         "prediction_count": len(predictions),
-                        "note": "모든 DB 변경사항은 롤백되었습니다. 실제 데이터는 변경되지 않았습니다."
+                        "team_rank_count": team_count,
+                        "note": "모든 작업은 하나의 트랜잭션으로 수행된 후 ROLLBACK되었습니다. DB는 변경되지 않았습니다."
                     }
                     
                 except Exception as inner_e:
-                    # 오류 발생 시에도 롤백
-                    conn.execute(text("ROLLBACK TO SAVEPOINT admin_test"))
-                    raise inner_e
+                    trans.rollback()
+                    print(f"   ❌ 파이프라인 실패로 롤백: {inner_e}")
+                    result = {
+                        "status": "error",
+                        "message": f"파이프라인 실행 중 오류 발생, 트랜잭션 롤백됨: {str(inner_e)}",
+                        "target_date": target_date
+                    }
+            
+            return result
                     
         except ValueError:
             raise HTTPException(
@@ -135,29 +171,33 @@ class AdminService:
                 status_code=500,
                 detail=f"관리자 파이프라인 실행 실패: {str(e)}"
             )
+        finally:
+            # config 날짜 원복 (예외 발생 여부와 관계없이 항상 실행)
+            if previous_config:
+                AdminService._restore_admin_date(previous_config)
+                print(f"   ✅ [Admin] config 상태가 원복되었습니다.")
 
 
 # --- API Endpoints ---
 
 @router.get("/date")
-def get_date(admin_key: str = Depends(verify_admin_api_key)):
+def get_date():
     """현재 날짜를 조회합니다."""
     return {"current_date": str(AdminService.get_current_date())}
 
 
 @router.post("/date")
-def set_date(new_date: str, admin_key: str = Depends(verify_admin_api_key)):
+def set_date(new_date: str):
     """날짜를 설정합니다."""
     return AdminService.set_date(new_date)
 
 
 @router.post("/pipeline")
 def run_pipeline(
-    target_date: str, 
-    admin_key: str = Depends(verify_admin_api_key)
+    target_date: str
 ):
     """
     관리자 모드 파이프라인을 실행합니다.
-    트랜잭션 롤백을 사용하여 DB를 오염시키지 않습니다.
+    하나의 트랜잭션으로 모든 작업을 수행한 후 ROLLBACK하여 DB 변경을 취소합니다.
     """
     return AdminService.run_admin_pipeline(target_date)

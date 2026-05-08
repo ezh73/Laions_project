@@ -1,7 +1,7 @@
 // src/pages/Dashboard.js
 import React, { useState, useEffect } from 'react';
 import { Box, CircularProgress, Alert } from '@mui/material';
-import { getPrediction } from '../api/predictionApi';
+import { getPrediction, getPostseasonBracket } from '../api/predictionApi';
 import { getSeasonProjection } from '../api/rankingApi';
 import useSystemMode from '../hooks/useSystemMode';
 import '../App.css';
@@ -18,6 +18,7 @@ import HistoryCard from '../components/HistoryCard';
 export default function Dashboard({ user }) {
     const { seasonMode, isAdminMode, loading: modeLoading, error: modeError } = useSystemMode();
     const [cardData, setCardData] = useState(null);
+    const [bracketData, setBracketData] = useState(null);
     const [dataLoading, setDataLoading] = useState(true);
     const [dataError, setDataError] = useState('');
 
@@ -28,15 +29,23 @@ export default function Dashboard({ user }) {
             setDataLoading(true);
             setDataError('');
             try {
-                let response;
-                // 정규시즌과 포스트시즌은 모두 경기 예측 데이터 사용 (동일 API)
-                // 오프시즌만 시뮬레이션 순위 예측 데이터 사용
                 if (seasonMode === 'offseason') {
-                    response = await getSeasonProjection();
+                    // 오프시즌: 시즌 순위 예측만
+                    const response = await getSeasonProjection();
+                    setCardData(response.data);
+                } else if (seasonMode === 'postseason') {
+                    // 포스트시즌: 경기 예측 + 대진표 데이터 동시 fetch
+                    const [predResponse, bracketResponse] = await Promise.all([
+                        getPrediction(),
+                        getPostseasonBracket(),
+                    ]);
+                    setCardData(predResponse.data);
+                    setBracketData(bracketResponse.data?.data || null);
                 } else {
-                    response = await getPrediction();
+                    // 정규시즌: 경기 예측만
+                    const response = await getPrediction();
+                    setCardData(response.data);
                 }
-                setCardData(response.data);
             } catch (err) {
                 console.error("Dashboard data fetch failed:", err);
                 const detail = err.response?.data?.detail || "데이터를 불러오는 중 오류가 발생했습니다.";
@@ -74,7 +83,13 @@ export default function Dashboard({ user }) {
             {/* --- 좌측 열 --- */}
             <Box sx={{ display: 'flex', flexDirection: 'column', flex: '2', gap: 3 }}>
                 {seasonMode === 'season' && <PredictionCard user={user} prediction={cardData} />}
-                {seasonMode === 'postseason' && <PostseasonCard user={user} prediction={cardData} />}
+                {seasonMode === 'postseason' && (
+                    <PostseasonCard
+                        user={user}
+                        prediction={cardData}
+                        bracket={bracketData}
+                    />
+                )}
                 {seasonMode === 'offseason' && <SeasonProjectionCard projection={cardData} />}
                 
                 <QuizCard user={user} />
@@ -82,7 +97,7 @@ export default function Dashboard({ user }) {
 
             {/* --- 우측 열 --- */}
             <Box sx={{ display: 'flex', flexDirection: 'column', flex: '1', gap: 3 }}>
-                <AiPerformanceCard isAdminMode={isAdminMode} seasonMode={seasonMode} />
+                <AiPerformanceCard seasonMode={seasonMode} />
                 <RankingCard />
                 <LeagueStandingsCard />
                 <HistoryCard />

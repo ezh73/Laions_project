@@ -70,17 +70,8 @@ def get_season_mode():
             if regular_count < 720:
                 return "season"
 
-            # 2) 포스트시즌 경기 수 확인
-            postseason_count = conn.execute(text(f"""
-                SELECT COUNT(*) FROM kbo_games
-                WHERE is_postseason = TRUE
-                AND EXTRACT(YEAR FROM game_date) = :year
-                AND game_date <= :today
-            """), {"year": CURRENT_DATE.year, "today": CURRENT_DATE}).scalar()
-
-            if postseason_count == 0:
-                return "postseason"
-
+            # 2) 정규시즌이 종료됨 → 포스트시즌 모드로 진입
+            #    (postseason_count와 관계없이, KS 우승팀이 결정되기 전까지는 postseason)
             # 3) 포스트시즌 종료 여부 확인 (한국시리즈 우승팀 탄생 여부)
             ks_res = conn.execute(text(f"""
                 SELECT winning_team, COUNT(*) as wins
@@ -95,7 +86,7 @@ def get_season_mode():
 
             if ks_res:
                 return "offseason"
-            
+
             return "postseason"
             
     except Exception as e:

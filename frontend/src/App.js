@@ -5,7 +5,7 @@ import { Container, CssBaseline, CircularProgress, Box } from '@mui/material';
 
 import { onAuthStateChangedListener } from './firebase';
 import Navbar from './components/Navbar';
-import Dashboard from './pages/Dashboard'; // 👈 Dashboard 페이지를 임포트
+import Dashboard from './pages/Dashboard';
 import LoginPage from './pages/LoginPage';
 
 function App() {
@@ -13,7 +13,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Firebase 인증 상태 변경 구독 (redirect 로그인 결과도 자동 감지)
+    // Supabase 인증 상태 변경 구독
     const unsubscribe = onAuthStateChangedListener(currentUser => {
       setUser(currentUser);
       setLoading(false);
@@ -31,7 +31,6 @@ function App() {
       <Navbar user={user} />
       <Container sx={{ mt: 4, mb: 4 }}>
         {user ? (
-          // 🙋‍♂️ 로그인 시 항상 Dashboard 페이지만 보여줍니다.
           <Dashboard user={user} />
         ) : (
           <LoginPage />

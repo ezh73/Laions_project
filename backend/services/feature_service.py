@@ -1,5 +1,5 @@
 # backend/services/feature_service.py
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from datetime import date
 import pandas as pd
 import numpy as np
@@ -7,13 +7,11 @@ from sqlalchemy import text
 from collections import deque
 import math
 import logging
-import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 from config import engine, TEAMS, CURRENT_DATE
-from auth_utils import verify_admin_api_key
 
 router = APIRouter(prefix="/api/features", tags=["features"])
 
@@ -33,24 +31,40 @@ class FeatureService:
         if is_win == 1: return current_streak + 1 if current_streak > 0 else 1
         elif is_win == 0: return current_streak - 1 if current_streak < 0 else -1
         else: return 0
+
     @staticmethod
     def _update_db_schema():
-        """새로 추가된 피처 컬럼들을 DB에 반영합니다."""
-        conn = engine.raw_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS home_recent_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS away_recent_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS home_matchup_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS away_matchup_rd FLOAT;")
-                cursor.execute(f"ALTER TABLE match_features ADD COLUMN IF NOT EXISTS season_matchup_count INTEGER;")
-                conn.commit()
-        finally:
-            conn.close()
+        """새로 추가된 피처 컬럼들을 DB에 반영합니다. (SQLAlchemy engine.begin() 사용)"""
+        alter_queries = [
+            "ALTER TABLE match_features ADD COLUMN IF NOT EXISTS home_recent_rd FLOAT",
+            "ALTER TABLE match_features ADD COLUMN IF NOT EXISTS away_recent_rd FLOAT",
+            "ALTER TABLE match_features ADD COLUMN IF NOT EXISTS home_matchup_rd FLOAT",
+            "ALTER TABLE match_features ADD COLUMN IF NOT EXISTS away_matchup_rd FLOAT",
+            "ALTER TABLE match_features ADD COLUMN IF NOT EXISTS season_matchup_count INTEGER",
+        ]
+        with engine.begin() as conn:
+            for q in alter_queries:
+                conn.execute(text(q))
+
+    @staticmethod
+    def _bulk_insert_features(exec_conn, columns, values):
+        """match_features 테이블을 DELETE + bulk INSERT 합니다."""
+        # 1. 기존 데이터 전체 삭제
+        exec_conn.execute(text("DELETE FROM match_features"))
+        # 2. 한 row씩 INSERT (SQLAlchemy 호환)
+        placeholders = ", ".join([f":{col}" for col in columns])
+        insert_sql = text(f"INSERT INTO match_features ({', '.join(columns)}) VALUES ({placeholders})")
+        for row_tuple in values:
+            row_dict = dict(zip(columns, row_tuple))
+            exec_conn.execute(insert_sql, row_dict)
+
     @classmethod
-    def build_all_features(cls):
+    def build_all_features(cls, conn=None):
         """
         KBO 원천 데이터를 순회하며 모든 피처를 계산하고 DB에 저장합니다.
+        
+        Args:
+            conn: 외부 트랜잭션 connection (관리자 모드용). None이면 자체 트랜잭션 사용.
         """
         # 1. 데이터 로드: 날짜순으로 정렬하여 과거부터 현재까지 시뮬레이션
         query = text(f"""
@@ -58,8 +72,8 @@ class FeatureService:
             FROM kbo_games
             ORDER BY game_date ASC, game_id ASC
         """)
-        with engine.connect() as conn:
-            df_games = pd.read_sql(query, conn)
+        with engine.connect() as read_conn:
+            df_games = pd.read_sql(query, read_conn)
 
         if df_games.empty: return 0
 
@@ -80,7 +94,7 @@ class FeatureService:
 
         # [상대 전적 상태] 팀간 상대 득실 (시즌마다 리셋됨)
         matchup_stats = {
-            team: {opp: {'scored': 0, 'allowed': 0, 'count': 0} 
+            team: {opp: {'scored': 0, 'allowed': 0, 'count': 0}
                    for opp in TEAMS if opp != team}
             for team in TEAMS
         }
@@ -173,25 +187,22 @@ class FeatureService:
 
         # 4. DB 저장 (DELETE FROM 사용: CASCADE 없이 안전하게 전체 삭제 후 재삽입)
         columns = list(final_features[0].keys())
-        query = f"INSERT INTO match_features ({', '.join(columns)}) VALUES %s"
         values = [tuple(row[col] for col in columns) for row in final_features]
 
-        conn = engine.raw_connection()
-        try:
-            with conn.cursor() as cursor:
-                # TRUNCATE CASCADE 대신 DELETE 사용 (외래키 CASCADE 삭제 방지)
-                cursor.execute(f"DELETE FROM match_features")
-                psycopg2.extras.execute_values(cursor, query, values)
-                conn.commit()
-        finally:
-            conn.close()
+        if conn:
+            # 외부 트랜잭션 사용 (관리자 모드) - SQLAlchemy Connection 사용
+            cls._bulk_insert_features(conn, columns, values)
+        else:
+            # 자체 트랜잭션 사용 (일반 모드) - SQLAlchemy engine.begin() 사용
+            with engine.begin() as write_conn:
+                cls._bulk_insert_features(write_conn, columns, values)
         
         return len(final_features)
 
 # --- API Endpoints ---
 
 @router.post("/rebuild")
-def api_rebuild_features(admin_key: str = Depends(verify_admin_api_key)):
+def api_rebuild_features():
     """관리자용: 원천 데이터를 바탕으로 전체 구단의 피처를 재계산합니다."""
     try:
         count = FeatureService.build_all_features()

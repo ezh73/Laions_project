@@ -36,7 +36,7 @@ def upsert_user_score(
     user_id: str,
     nickname: str,
     score_earned: int,
-    score_type: str = "total_score"
+    score_type: str = "weekly_score"
 ) -> bool:
     """
     사용자 점수를 Supabase user_profiles 테이블에 UPSERT합니다.
@@ -45,7 +45,7 @@ def upsert_user_score(
         user_id: Firebase UID 또는 Supabase Auth UID
         nickname: 사용자 닉네임
         score_earned: 추가할 점수
-        score_type: 점수 타입 (total_score, weekly_score, prediction_score, quiz_score)
+        score_type: 점수 타입 (weekly_score, prediction_score, quiz_score)
     
     Returns:
         성공 여부
@@ -61,11 +61,15 @@ def upsert_user_score(
         if existing.data:
             # 기존 사용자: 점수 업데이트
             current = existing.data[0]
+            from datetime import datetime
+            now_iso = datetime.utcnow().isoformat()
             updates = {
                 score_type: (current.get(score_type, 0) or 0) + score_earned,
-                "total_score": (current.get("total_score", 0) or 0) + score_earned,
-                "updated_at": "now()"
+                "updated_at": now_iso
             }
+            # weekly_score는 score_type이 "weekly_score"일 때만 증가
+            if score_type == "weekly_score":
+                updates["weekly_score"] = (current.get("weekly_score", 0) or 0) + score_earned
             client.table("user_profiles").update(updates).eq("user_id", user_id).execute()
         else:
             # 신규 사용자: 프로필 생성
@@ -73,7 +77,6 @@ def upsert_user_score(
                 "user_id": user_id,
                 "nickname": nickname,
                 score_type: score_earned,
-                "total_score": score_earned,
                 "weekly_score": score_earned if score_type == "weekly_score" else 0,
                 "prediction_score": score_earned if score_type == "prediction_score" else 0,
                 "quiz_score": score_earned if score_type == "quiz_score" else 0,
@@ -86,13 +89,13 @@ def upsert_user_score(
         return False
 
 
-def get_user_rankings(limit: int = 10, order_by: str = "total_score"):
+def get_user_rankings(limit: int = 10, order_by: str = "weekly_score"):
     """
     사용자 랭킹을 조회합니다.
     
     Args:
         limit: 조회할 상위 N명
-        order_by: 정렬 기준 (total_score, weekly_score)
+        order_by: 정렬 기준 (weekly_score, prediction_score, quiz_score)
     
     Returns:
         랭킹 리스트
@@ -114,7 +117,6 @@ def get_user_rankings(limit: int = 10, order_by: str = "total_score"):
                 "rank": idx + 1,
                 "user_id": row.get("user_id"),
                 "nickname": row.get("nickname", "익명"),
-                "total_score": row.get("total_score", 0) or 0,
                 "weekly_score": row.get("weekly_score", 0) or 0,
                 "prediction_score": row.get("prediction_score", 0) or 0,
                 "quiz_score": row.get("quiz_score", 0) or 0,
@@ -132,8 +134,12 @@ def reset_weekly_scores():
         return False
 
     try:
+        # updated_at에 "now()" 문자열이 아닌 실제 DB now() 함수를 사용하기 위해
+        # Supabase의 raw SQL 실행 기능을 활용
+        from datetime import datetime
+        now_iso = datetime.utcnow().isoformat()
         client.table("user_profiles") \
-            .update({"weekly_score": 0, "updated_at": "now()"}) \
+            .update({"weekly_score": 0, "updated_at": now_iso}) \
             .gte("weekly_score", 1) \
             .execute()
         return True

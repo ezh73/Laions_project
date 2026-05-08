@@ -1,7 +1,7 @@
 // src/components/RankingCard.js
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, CircularProgress, Typography } from '@mui/material';
-import { getWeeklyRanking } from '../api/rankingApi';
+import { getTopRanking } from '../api/rankingApi';
 
 export default function RankingCard() {
   const [ranking, setRanking] = useState([]);
@@ -11,8 +11,8 @@ export default function RankingCard() {
     const fetchRanking = async () => {
       setLoading(true);
       try {
-        const response = await getWeeklyRanking(5);
-        // API 응답: {status: "ok", rankings: [{user_id, nickname, total_score, weekly_score}, ...]}
+        const response = await getTopRanking(5);
+        // API 응답: {status: "ok", rankings: [{user_id, nickname, weekly_score, prediction_score, quiz_score}, ...]}
         setRanking(response.data.rankings || []);
       } catch (err) {
         console.error(err);

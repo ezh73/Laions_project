@@ -4,7 +4,8 @@ import { Card, CardContent, Table, TableBody, TableCell, TableContainer, TableHe
 
 export default function SeasonProjectionCard({ projection }) {
     // API 응답: {status: "ok", data: [{team, expected_win_rate, expected_wins, predicted_rank}, ...]}
-    const rankings = projection?.data || [];
+    // Dashboard.js에서 response.data를 cardData로 저장하므로, projection은 {status, data} 객체
+    const rankings = projection?.data?.data || projection?.data || [];
 
     if (!rankings || rankings.length === 0) {
         return <Alert severity="warning">시즌 예측 데이터를 불러올 수 없습니다.</Alert>;

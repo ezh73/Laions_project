@@ -164,10 +164,10 @@ def submit_user_prediction(user_id: str, game_id: str, predicted_winner: str):
     """사용자의 승리 예측을 DB에 저장합니다."""
     try:
         with engine.begin() as conn:
-            # user_rankings 테이블에 사용자 정보가 없으면 자동 생성
+            # user_profiles 테이블에 사용자 정보가 없으면 자동 생성
             conn.execute(
                 text("""
-                    INSERT INTO user_rankings (user_id, nickname)
+                    INSERT INTO user_profiles (user_id, nickname)
                     VALUES (:uid, :nick)
                     ON CONFLICT (user_id) DO NOTHING
                 """),
@@ -245,6 +245,43 @@ def get_standings():
             return {"status": "ok", "standings": standings}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"순위 조회 실패: {str(e)}")
+
+
+# 8. 오늘의 삼성 라이온즈 역사 API
+@app.get("/api/history/today")
+def get_today_history():
+    """오늘 날짜의 삼성 라이온즈 역사를 반환합니다. (samfan_history 테이블)"""
+    try:
+        with engine.connect() as conn:
+            # 오늘 날짜(MM-DD)와 일치하는 역사 데이터 조회
+            today_mmdd = CURRENT_DATE.strftime("%m-%d")
+            result = conn.execute(
+                text("""
+                    SELECT id, date_text, event, reference
+                    FROM samfan_history
+                    WHERE to_char(event_date, 'MM-DD') = :mmdd
+                    ORDER BY RANDOM() LIMIT 1
+                """),
+                {"mmdd": today_mmdd}
+            ).fetchone()
+            
+            if not result:
+                return {"status": "ok", "history": None, "message": "오늘의 역사 데이터가 없습니다."}
+            
+            return {
+                "status": "ok",
+                "history": {
+                    "id": result[0],
+                    "date_text": result[1],
+                    "event": result[2],
+                    "reference": result[3]
+                }
+            }
+    except Exception as e:
+        # samfan_history 테이블이 아직 생성되지 않은 경우 404 반환
+        print(f"⚠️ 역사 조회 중 오류: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="역사 데이터를 조회할 수 없습니다.")
 
 
 if __name__ == "__main__":

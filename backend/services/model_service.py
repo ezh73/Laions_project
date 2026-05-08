@@ -7,7 +7,6 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import text
 from config import engine, CURRENT_DATE, FEATURE_CONFIG, SEASON_MODE, get_season_mode
-from auth_utils import verify_admin_api_key
 from services.feature_service import FeatureService
 from services.model_preprocessor import ModelPreprocessor
 
@@ -40,64 +39,80 @@ class ModelService:
         return True
 
     @classmethod
-    def predict_all_games(cls):
-        """저장된 모든 일정의 경기 승패를 예측합니다."""
+    def predict_all_games(cls, conn=None):
+        """
+        오늘 이후 경기의 승패를 예측합니다.
+        
+        Args:
+            conn: 외부 트랜잭션 connection (관리자 모드용). None이면 자체 트랜잭션 사용.
+        """
         model = cls.get_model()
         if not model:
             return []
 
-        # 1. 모든 일정 가져오기
-        with engine.connect() as conn:
+        predictions = []
+
+        # 1. 오늘(또는 관리자 모드 설정 날짜)의 일정 가져오기 + 각 경기 피처 조회 (단일 connection 재사용)
+        with engine.connect() as read_conn:
             query = text(f"""
                 SELECT game_id, game_date, home_team, away_team
                 FROM kbo_schedule
+                WHERE game_date = :today
+                ORDER BY game_date ASC
             """)
-            schedules = pd.read_sql(query, conn)
+            schedules = pd.read_sql(query, read_conn, params={"today": CURRENT_DATE})
 
-        if schedules.empty:
-            return []
+            if schedules.empty:
+                return []
 
-        predictions = []
-        for _, row in schedules.iterrows():
-            gid, gdate, home, away = row['game_id'], row['game_date'], row['home_team'], row['away_team']
-            
-            # 2. 각 팀의 최신 피처 가져오기
-            with engine.connect() as conn:
+            for _, row in schedules.iterrows():
+                gid, gdate, home, away = row['game_id'], row['game_date'], row['home_team'], row['away_team']
+                
+                # 2. 각 팀의 최신 피처 가져오기 (같은 read_conn 재사용)
                 f_query = text(f"""
                     SELECT * FROM match_features
                     WHERE game_id = :gid
                 """)
-                features = pd.read_sql(f_query, conn, params={"gid": gid})
+                features = pd.read_sql(f_query, read_conn, params={"gid": gid})
 
-            if features.empty:
-                continue
+                if features.empty:
+                    continue
 
-            # 3. 모델 입력 포맷팅
-            X = ModelPreprocessor.preprocess_data(features)
+                # 3. 모델 입력 포맷팅
+                X = ModelPreprocessor.preprocess_data(features)
 
-            # 4. 예측 수행
-            prob = model.predict_proba(X)[0] # [원정승 확률, 홈승 확률]
-            home_win_prob = float(prob[1])
-            predicted_winner = home if home_win_prob > 0.5 else away
-            winner_prob = home_win_prob if home_win_prob > 0.5 else (1 - home_win_prob)
+                # 4. 예측 수행
+                prob = model.predict_proba(X)[0] # [원정승 확률, 홈승 확률]
+                home_win_prob = float(prob[1])
+                predicted_winner = home if home_win_prob > 0.5 else away
+                winner_prob = home_win_prob if home_win_prob > 0.5 else (1 - home_win_prob)
 
-            # 5. DB 저장 (ai_predictions)
-            with engine.begin() as conn:
-                conn.execute(text(f"""
-                    INSERT INTO ai_predictions (game_id, game_date, predicted_winner, prediction_prob)
-                    VALUES (:gid, :gdate, :winner, :prob)
-                    ON CONFLICT (game_id) DO UPDATE SET
-                        predicted_winner = EXCLUDED.predicted_winner,
-                        prediction_prob = EXCLUDED.prediction_prob
-                """), {"gid": gid, "gdate": gdate, "winner": predicted_winner, "prob": winner_prob})
+                # 5. DB 저장 (conn이 있을 때는 외부 트랜잭션 사용, 없으면 자체 트랜잭션)
+                if conn:
+                    conn.execute(text(f"""
+                        INSERT INTO ai_predictions (game_id, game_date, predicted_winner, prediction_prob)
+                        VALUES (:gid, :gdate, :winner, :prob)
+                        ON CONFLICT (game_id) DO UPDATE SET
+                            predicted_winner = EXCLUDED.predicted_winner,
+                            prediction_prob = EXCLUDED.prediction_prob
+                    """), {"gid": gid, "gdate": gdate, "winner": predicted_winner, "prob": winner_prob})
+                else:
+                    with engine.begin() as write_conn:
+                        write_conn.execute(text(f"""
+                            INSERT INTO ai_predictions (game_id, game_date, predicted_winner, prediction_prob)
+                            VALUES (:gid, :gdate, :winner, :prob)
+                            ON CONFLICT (game_id) DO UPDATE SET
+                                predicted_winner = EXCLUDED.predicted_winner,
+                                prediction_prob = EXCLUDED.prediction_prob
+                        """), {"gid": gid, "gdate": gdate, "winner": predicted_winner, "prob": winner_prob})
 
-            predictions.append({
-                "game_id": gid,
-                "home_team": home,
-                "away_team": away,
-                "predicted_winner": predicted_winner,
-                "probability": round(winner_prob, 2)
-            })
+                predictions.append({
+                    "game_id": gid,
+                    "home_team": home,
+                    "away_team": away,
+                    "predicted_winner": predicted_winner,
+                    "probability": round(winner_prob, 2)
+                })
 
         return predictions
 
@@ -194,7 +209,7 @@ class ModelPipeline:
 
 @router.get("/all")
 def get_all_predictions():
-    """모든 경기에 대한 AI 예측 결과를 반환합니다."""
+    """오늘 이후 경기에 대한 AI 예측 결과를 반환합니다."""
     preds = ModelService.predict_all_games()
     return {"status": "ok", "predictions": preds}
 
